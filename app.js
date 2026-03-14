@@ -6,9 +6,11 @@ let gameState = {
     gridData: [], // 2D array of color indices
     regionData: [], // 2D array to track what contiguous ID a square belongs to
     regionSizes: {}, // Map of region ID to total squares
+    colorTotals: [], // Total squares for each color
+    colorsCompleted: new Set(), // Track fully completed colors
     palette: [], // Array of RGB colors
     selectedColor: null,
-    paintedCells: new Set() // Now we track individual squares painted, not huge regions!
+    paintedCells: new Set() // Now we track individual squares painted
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -66,6 +68,11 @@ function handleImage(file) {
             setTimeout(() => processImage(img), 50); 
         };
         img.src = e.target.result;
+        
+        // Populate the floating reference image so kids can see what they are painting!
+        const refImage = document.getElementById('reference-image');
+        refImage.src = e.target.result;
+        refImage.classList.remove('hidden');
     };
     reader.readAsDataURL(file);
 }
@@ -133,12 +140,16 @@ function calculateRegions() {
     
     gameState.regionData = Array.from({length: rows}, () => Array(cols).fill(-1));
     gameState.regionSizes = {};
+    gameState.colorTotals = new Array(MAX_COLORS).fill(0);
     
     let visited = Array.from({length: rows}, () => Array(cols).fill(false));
     let regionId = 0;
     
     for (let y = 0; y < rows; y++) {
         for (let x = 0; x < cols; x++) {
+            if (gameState.gridData[y][x] !== -1) {
+                gameState.colorTotals[gameState.gridData[y][x]]++;
+            }
             if (!visited[y][x] && gameState.gridData[y][x] !== -1) {
                 let colorIdx = gameState.gridData[y][x];
                 let size = 0;
@@ -350,6 +361,10 @@ function buildPaletteUI() {
         swatch.style.backgroundColor = `rgb(${color.r}, ${color.g}, ${color.b})`;
         swatch.innerText = index + 1;
         
+        if (gameState.colorsCompleted.has(index)) {
+            swatch.classList.add('completed');
+        }
+        
         let brightness = (color.r * 299 + color.g * 587 + color.b * 114) / 1000;
         swatch.style.color = brightness > 128 ? '#2F3542' : '#FFFFFF';
         
@@ -375,6 +390,33 @@ function checkWinCondition() {
     const rows = gameState.gridData.length;
     const cols = gameState.gridData[0].length;
     
+    // 1. Check if the currently selected color just finished!
+    if (gameState.selectedColor !== null && !gameState.colorsCompleted.has(gameState.selectedColor)) {
+        let paintedForColor = 0;
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                if (gameState.gridData[y][x] === gameState.selectedColor && gameState.paintedCells.has(`${x},${y}`)) {
+                    paintedForColor++;
+                }
+            }
+        }
+        
+        if (paintedForColor >= gameState.colorTotals[gameState.selectedColor]) {
+            gameState.colorsCompleted.add(gameState.selectedColor);
+            
+            // FIREWORKS!
+            confetti({
+                particleCount: 150,
+                spread: 70,
+                origin: { y: 0.6 },
+                zIndex: 9999
+            });
+            
+            buildPaletteUI(); // Add the checkmark!
+        }
+    }
+    
+    // 2. Check complete win overall
     for(let y=0; y<rows; y++){
         for(let x=0; x<cols; x++){
             if(gameState.gridData[y][x] !== -1) totalSquares++;
@@ -383,8 +425,20 @@ function checkWinCondition() {
     
     if (gameState.paintedCells.size >= totalSquares) {
         setTimeout(() => {
+            // HUGE FIREWORKS!
+            let duration = 3 * 1000;
+            let animationEnd = Date.now() + duration;
+            let defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 9999 };
+
+            let interval = setInterval(function() {
+                let timeLeft = animationEnd - Date.now();
+                if (timeLeft <= 0) return clearInterval(interval);
+                let particleCount = 50 * (timeLeft / duration);
+                confetti(Object.assign({}, defaults, { particleCount, origin: { x: Math.random(), y: Math.random() - 0.2 } }));
+            }, 250);
+            
             alert("🎉 YAY! You painted every single square! What a beautiful picture! 🎉");
-        }, 300);
+        }, 500);
     }
 }
 
@@ -494,6 +548,10 @@ function resetGame() {
     document.getElementById('upload-section').classList.remove('hidden');
     gameState = {
         gridData: [],
+        regionData: [],
+        regionSizes: {},
+        colorTotals: [],
+        colorsCompleted: new Set(),
         palette: [],
         selectedColor: null,
         paintedCells: new Set()

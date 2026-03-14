@@ -31,8 +31,11 @@
                 
                 <div class="workspace-layout">
                     <!-- The big canvas where our coloring page will go -->
-                    <div class="canvas-container">
-                        <canvas id="paint-canvas"></canvas>
+                    <div class="canvas-wrapper">
+                        <div class="canvas-container">
+                            <canvas id="paint-canvas"></canvas>
+                        </div>
+                        <img id="reference-image" class="reference-image hidden" alt="Original Photo" />
                     </div>
 
                     <!-- The color palette -->
@@ -55,6 +58,8 @@
     <!-- Hidden canvas to help us do the computer math -->
     <canvas id="processing-canvas" hidden></canvas>
 
+    <!-- Adding Confetti fireworks! -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

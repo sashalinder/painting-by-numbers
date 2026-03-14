@@ -143,6 +143,13 @@ main {
     min-height: 0;
 }
 
+.canvas-wrapper {
+    flex-grow: 1;
+    min-height: 0;
+    position: relative; /* Anchor for the preview image */
+    display: flex;
+}
+
 .canvas-container {
     flex-grow: 1; /* Allow canvas container to absorb all remaining free height! */
     min-height: 0;
@@ -151,10 +158,25 @@ main {
     padding: 10px;
     box-shadow: inset 0 0 10px rgba(0,0,0,0.05);
     border: 3px solid #E1E8EB;
+    max-height: 65vh; /* Letting it stretch a bit taller! */
     display: flex;
     justify-content: center;
     align-items: center;
     overflow: auto; /* Allow scrolling inside the canvas if it gets huge */
+}
+
+.reference-image {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    width: 100px;
+    height: 100px;
+    object-fit: cover;
+    border-radius: var(--radius-medium);
+    border: 3px solid white;
+    box-shadow: var(--shadow-hover);
+    z-index: 10;
+    pointer-events: none; /* Ignore clicks so you can color under it! */
 }
 
 canvas {
@@ -195,8 +217,9 @@ canvas {
     color: white;
     text-shadow: 1px 1px 2px rgba(0,0,0,0.5); /* Helps numbers show on light colors */
     box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-    transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); /* Bouncy transition! */
+    transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); 
     border: 3px solid white;
+    position: relative; /* For the checkmark */
 }
 
 .color-swatch:hover {
@@ -207,6 +230,26 @@ canvas {
     transform: scale(1.2);
     border-color: var(--text-color);
     box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+}
+
+/* Checkmark logic for completed colors! */
+.color-swatch.completed {
+    opacity: 0.8;
+}
+
+.color-swatch.completed::after {
+    content: '✔️';
+    position: absolute;
+    bottom: -10px;
+    right: -10px;
+    font-size: 1.5rem;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+    animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes popIn {
+    0% { transform: scale(0); }
+    100% { transform: scale(1); }
 }
 
 /* ------------------------
