@@ -1,6 +1,6 @@
 const MAX_COLORS = 16;
 const DESKTOP_GRID_SIZE = 120; // More cells = finer detail on desktop
-const MOBILE_GRID_SIZE = 26;  // ~14-15px cells on a 390px phone — big enough for kids to tap
+const MOBILE_GRID_SIZE = 45;  // More cells = much better image recognition; kids tap regions not individual cells
 const DESKTOP_DISPLAY_SIZE = 1500;
 
 function getGridSize() {
@@ -536,7 +536,7 @@ function drawGameCanvas() {
         const availW = window.innerWidth - 8;
         const byHeight = Math.floor(availH / rows);
         const byWidth = Math.floor(availW / cols);
-        cellSize = Math.max(14, Math.min(byWidth, byHeight)); // 14px minimum so numbers are readable and kids can tap
+        cellSize = Math.max(8, Math.min(byWidth, byHeight)); // 8px minimum — kids tap entire regions (which are many cells), not individual cells
     } else {
         cellSize = Math.max(6, Math.floor(DESKTOP_DISPLAY_SIZE / Math.max(cols, rows)));
     }
