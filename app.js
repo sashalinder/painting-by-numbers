@@ -164,7 +164,8 @@ function handleImage(file) {
 
 function processImage(img) {
     const processingCanvas = document.getElementById('processing-canvas');
-    
+    const ctx = processingCanvas.getContext('2d');
+
     const gridSize = getGridSize();
     let cols = gridSize;
     let rows = gridSize;
@@ -173,49 +174,53 @@ function processImage(img) {
     } else {
         cols = Math.floor(gridSize * (img.width / img.height));
     }
-    
-    processingCanvas.width = cols;
-    processingCanvas.height = rows;
-    const ctx = processingCanvas.getContext('2d');
-    ctx.drawImage(img, 0, 0, cols, rows);
-    
-    const imageData = ctx.getImageData(0, 0, cols, rows);
-    const pixels = imageData.data;
-    
-    // Sample colors for K-Means to keep the computer brain fast
+
+    // Step 1: Sample colors from a larger intermediate canvas for better k-means accuracy
+    const sampleScale = 8; // 8x the grid resolution = much richer color data
+    const sampleW = cols * sampleScale;
+    const sampleH = rows * sampleScale;
+    processingCanvas.width = sampleW;
+    processingCanvas.height = sampleH;
+    ctx.drawImage(img, 0, 0, sampleW, sampleH);
+    const sampleData = ctx.getImageData(0, 0, sampleW, sampleH).data;
+
+    // Collect color samples (cap at 4000 for speed)
     let sampleColors = [];
-    let totalSolid = 0;
-    for (let i = 0; i < pixels.length; i += 4) {
-        if (pixels[i+3] > 128) totalSolid++;
-    }
-    
-    let sampleRate = Math.min(1.0, 3000 / Math.max(1, totalSolid));
-    for (let i = 0; i < pixels.length; i += 4) {
-        if (pixels[i+3] > 128 && Math.random() <= sampleRate) {
-            sampleColors.push({r: pixels[i], g: pixels[i+1], b: pixels[i+2]});
+    const totalPx = (sampleW * sampleH);
+    const step = Math.max(1, Math.floor(totalPx / 4000));
+    for (let i = 0; i < totalPx; i += step) {
+        const p = i * 4;
+        if (sampleData[p + 3] > 128) {
+            sampleColors.push({ r: sampleData[p], g: sampleData[p + 1], b: sampleData[p + 2] });
         }
     }
-    if(sampleColors.length === 0) sampleColors.push({r:0,g:0,b:0});
-    
+    if (sampleColors.length === 0) sampleColors.push({ r: 0, g: 0, b: 0 });
+
     gameState.palette = kMeans(sampleColors, MAX_COLORS);
-    
+
+    // Step 2: Draw at grid resolution and assign each cell to the nearest palette color
+    processingCanvas.width = cols;
+    processingCanvas.height = rows;
+    ctx.drawImage(img, 0, 0, cols, rows);
+    const pixels = ctx.getImageData(0, 0, cols, rows).data;
+
     gameState.gridData = [];
     for (let y = 0; y < rows; y++) {
         let row = [];
         for (let x = 0; x < cols; x++) {
             let idx = (y * cols + x) * 4;
-            if (pixels[idx+3] < 128) {
+            if (pixels[idx + 3] < 128) {
                 row.push(-1);
             } else {
-                row.push(findNearestColorIndex(pixels[idx], pixels[idx+1], pixels[idx+2], gameState.palette));
+                row.push(findNearestColorIndex(pixels[idx], pixels[idx + 1], pixels[idx + 2], gameState.palette));
             }
         }
         gameState.gridData.push(row);
     }
-    
+
     // Calculate regions for cursor dynamic sizing
     calculateRegions();
-    
+
     drawGameCanvas();
     buildPaletteUI();
 }
@@ -272,17 +277,41 @@ function calculateRegions() {
     }
 }
 
+function kMeansInit(colors, k) {
+    // k-means++ initialization: spread out initial centroids for reliable convergence
+    const centroids = [{ ...colors[Math.floor(Math.random() * colors.length)] }];
+    while (centroids.length < k) {
+        // For each color, find its distance squared to the nearest existing centroid
+        let distances = colors.map(c => {
+            let minD = Infinity;
+            for (const cent of centroids) {
+                const d = (c.r - cent.r) ** 2 + (c.g - cent.g) ** 2 + (c.b - cent.b) ** 2;
+                if (d < minD) minD = d;
+            }
+            return minD;
+        });
+        // Pick next centroid with probability proportional to distance squared
+        const total = distances.reduce((a, b) => a + b, 0);
+        let r = Math.random() * total;
+        let cumulative = 0;
+        let chosen = colors.length - 1;
+        for (let j = 0; j < distances.length; j++) {
+            cumulative += distances[j];
+            if (r <= cumulative) { chosen = j; break; }
+        }
+        centroids.push({ ...colors[chosen] });
+    }
+    return centroids;
+}
+
 function kMeans(colors, k) {
     if (colors.length === 0) return [];
-    let centroids = [];
-    for (let i = 0; i < k; i++) {
-        centroids.push(colors[Math.floor(Math.random() * colors.length)]);
-    }
-    
-    let iterations = 12; // slightly more iterations for better colors 
+    let centroids = kMeansInit(colors, k);
+
+    let iterations = 20;
     while (iterations-- > 0) {
         let clusters = Array.from({length: k}, () => []);
-        
+
         for (let c of colors) {
             let bestDist = Infinity;
             let bestIdx = 0;
@@ -295,7 +324,7 @@ function kMeans(colors, k) {
             }
             clusters[bestIdx].push(c);
         }
-        
+
         let newCentroids = [];
         for (let i = 0; i < k; i++) {
             if (clusters[i].length > 0) {
@@ -304,12 +333,12 @@ function kMeans(colors, k) {
                     sumR += c.r; sumG += c.g; sumB += c.b;
                 }
                 newCentroids.push({
-                    r: Math.floor(sumR / clusters[i].length),
-                    g: Math.floor(sumG / clusters[i].length),
-                    b: Math.floor(sumB / clusters[i].length)
+                    r: Math.round(sumR / clusters[i].length),
+                    g: Math.round(sumG / clusters[i].length),
+                    b: Math.round(sumB / clusters[i].length)
                 });
             } else {
-                newCentroids.push(centroids[i]); 
+                newCentroids.push(centroids[i]);
             }
         }
         centroids = newCentroids;
@@ -491,6 +520,7 @@ function buildPaletteUI() {
                 canvas.style.cursor = 'crosshair';
 
                 updateMobileFabColor();
+                updateProgressBar();
 
                 // Close mobile popup after selection
                 if (isMobile()) {
@@ -509,6 +539,59 @@ function buildPaletteUI() {
         container.appendChild(createSwatch());
         if (mobileContainer) mobileContainer.appendChild(createSwatch());
     });
+}
+
+function updateProgressBar() {
+    const bar = document.getElementById('color-progress');
+    if (!bar) return;
+
+    if (gameState.selectedColor === null || gameState.gridData.length === 0) {
+        bar.classList.add('hidden');
+        return;
+    }
+
+    const colorIdx = gameState.selectedColor;
+    const total = gameState.colorTotals[colorIdx] || 0;
+    if (total === 0) return;
+
+    // Count how many cells of this color have been painted
+    let painted = 0;
+    const rows = gameState.gridData.length;
+    const cols = gameState.gridData[0].length;
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if (gameState.gridData[y][x] === colorIdx && gameState.paintedCells.has(`${x},${y}`)) {
+                painted++;
+            }
+        }
+    }
+
+    const pct = Math.round((painted / total) * 100);
+    const left = total - painted;
+
+    const c = gameState.palette[colorIdx];
+    const colorStr = `rgb(${c.r}, ${c.g}, ${c.b})`;
+
+    document.getElementById('cp-swatch').style.backgroundColor = colorStr;
+    document.getElementById('cp-fill').style.backgroundColor = colorStr;
+    document.getElementById('cp-fill').style.width = `${pct}%`;
+    document.getElementById('cp-name').textContent = `Color ${colorIdx + 1}`;
+
+    if (pct >= 100) {
+        document.getElementById('cp-remaining').textContent = 'All done! 🌟';
+        document.getElementById('cp-pct').textContent = '🎉';
+        // Re-trigger the pop animation
+        bar.classList.remove('cp-complete');
+        void bar.offsetWidth; // force reflow
+        bar.classList.add('cp-complete');
+    } else {
+        const spotsWord = left === 1 ? 'spot left' : 'spots left';
+        document.getElementById('cp-remaining').textContent = `${left} ${spotsWord}`;
+        document.getElementById('cp-pct').textContent = `${pct}%`;
+        bar.classList.remove('cp-complete');
+    }
+
+    bar.classList.remove('hidden');
 }
 
 // Check every single square to see if it's painted!
@@ -607,6 +690,7 @@ function handleCanvasClick(e) {
                 canvas.style.cursor = 'crosshair';
                 
                 drawGameCanvas();
+                updateProgressBar();
                 checkWinCondition();
             } else {
                 canvas.style.transform = "rotate(3deg)";
@@ -673,6 +757,7 @@ function handleCanvasMouseMove(e) {
 function resetGame() {
     document.getElementById('workspace-section').classList.add('hidden');
     document.getElementById('upload-section').classList.remove('hidden');
+    document.getElementById('color-progress').classList.add('hidden');
     hideMobileFab();
     gameState = {
         gridData: [],
