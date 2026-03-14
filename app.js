@@ -272,10 +272,10 @@ function processImage(img) {
     ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, sampleW, sampleH);
     const sampleData = ctx.getImageData(0, 0, sampleW, sampleH).data;
 
-    // Collect color samples (cap at 4000 for speed)
+    // Collect color samples (cap at 8000 for better accuracy)
     let sampleColors = [];
     const totalPx = (sampleW * sampleH);
-    const step = Math.max(1, Math.floor(totalPx / 4000));
+    const step = Math.max(1, Math.floor(totalPx / 8000));
     for (let i = 0; i < totalPx; i += step) {
         const p = i * 4;
         if (sampleData[p + 3] > 128) {
@@ -284,7 +284,11 @@ function processImage(img) {
     }
     if (sampleColors.length === 0) sampleColors.push({ r: 0, g: 0, b: 0 });
 
-    gameState.palette = kMeans(sampleColors, MAX_COLORS);
+    // Use Median Cut for a deterministic, well-distributed initial palette, then
+    // refine the centroids with k-means so they sit at actual cluster centres.
+    // This is reliably better than random k-means++ initialisation alone.
+    const mcPalette = medianCut(sampleColors, MAX_COLORS);
+    gameState.palette = kMeans(sampleColors, MAX_COLORS, mcPalette);
 
     // Step 2: Assign each grid cell by finding the MOST COMMON palette color in its entire
     // block (mode) — far more robust than a single center pixel, captures the true dominant
@@ -575,11 +579,73 @@ function calculateRegions() {
     }
 }
 
+// ─── Median Cut quantization ────────────────────────────────────────────────
+// Deterministically partitions colour space by repeatedly splitting the
+// largest-volume box along its widest perceptual channel.  Produces a
+// well-distributed palette that covers the full range of colours in the image.
+function medianCut(colors, k) {
+    if (colors.length === 0) return [];
+    k = Math.min(k, colors.length);
+
+    let boxes = [colors.slice()];
+
+    while (boxes.length < k) {
+        // Pick the box with the largest colour-space volume to split
+        let bigIdx = 0, bigVol = -1;
+        for (let i = 0; i < boxes.length; i++) {
+            if (boxes[i].length < 2) continue;
+            const v = _boxVolume(boxes[i]);
+            if (v > bigVol) { bigVol = v; bigIdx = i; }
+        }
+        if (bigVol <= 0) break; // All remaining boxes are single colours
+
+        const box = boxes[bigIdx];
+
+        // Find widest channel — weight by perceptual sensitivity (matches colorDistSq)
+        let minR = 255, maxR = 0, minG = 255, maxG = 0, minB = 255, maxB = 0;
+        for (const c of box) {
+            if (c.r < minR) minR = c.r; if (c.r > maxR) maxR = c.r;
+            if (c.g < minG) minG = c.g; if (c.g > maxG) maxG = c.g;
+            if (c.b < minB) minB = c.b; if (c.b > maxB) maxB = c.b;
+        }
+        const wR = (maxR - minR) * 1.414; // √2
+        const wG = (maxG - minG) * 2.000; // √4
+        const wB = (maxB - minB) * 1.732; // √3
+        let ch = 'r';
+        if (wG >= wR && wG >= wB) ch = 'g';
+        else if (wB >= wR) ch = 'b';
+
+        box.sort((a, b) => a[ch] - b[ch]);
+        const mid = Math.floor(box.length / 2);
+        boxes.splice(bigIdx, 1, box.slice(0, mid), box.slice(mid));
+    }
+
+    // Representative colour = average of each box
+    return boxes.map(box => {
+        let sumR = 0, sumG = 0, sumB = 0;
+        for (const c of box) { sumR += c.r; sumG += c.g; sumB += c.b; }
+        return {
+            r: Math.round(sumR / box.length),
+            g: Math.round(sumG / box.length),
+            b: Math.round(sumB / box.length)
+        };
+    });
+}
+
+function _boxVolume(box) {
+    let minR = 255, maxR = 0, minG = 255, maxG = 0, minB = 255, maxB = 0;
+    for (const c of box) {
+        if (c.r < minR) minR = c.r; if (c.r > maxR) maxR = c.r;
+        if (c.g < minG) minG = c.g; if (c.g > maxG) maxG = c.g;
+        if (c.b < minB) minB = c.b; if (c.b > maxB) maxB = c.b;
+    }
+    return (maxR - minR + 1) * (maxG - minG + 1) * (maxB - minB + 1);
+}
+
+// ─── k-means++ initialisation (used as fallback) ────────────────────────────
 function kMeansInit(colors, k) {
-    // k-means++ initialization: spread out initial centroids for reliable convergence
     const centroids = [{ ...colors[Math.floor(Math.random() * colors.length)] }];
     while (centroids.length < k) {
-        // Use perceptual distance to nearest existing centroid
         let distances = colors.map(c => {
             let minD = Infinity;
             for (const cent of centroids) {
@@ -588,7 +654,6 @@ function kMeansInit(colors, k) {
             }
             return minD;
         });
-        // Pick next centroid with probability proportional to distance squared
         const total = distances.reduce((a, b) => a + b, 0);
         let r = Math.random() * total;
         let cumulative = 0;
@@ -602,44 +667,44 @@ function kMeansInit(colors, k) {
     return centroids;
 }
 
-function kMeans(colors, k) {
+// ─── k-means refinement ─────────────────────────────────────────────────────
+// When initialCentroids are supplied (from medianCut) we skip random init and
+// run fewer iterations — the starting positions are already good.
+function kMeans(colors, k, initialCentroids) {
     if (colors.length === 0) return [];
-    let centroids = kMeansInit(colors, k);
+    let centroids = initialCentroids
+        ? initialCentroids.map(c => ({ ...c }))
+        : kMeansInit(colors, k);
 
-    let iterations = 20;
-    while (iterations-- > 0) {
-        let clusters = Array.from({length: k}, () => []);
+    const iterations = initialCentroids ? 15 : 20;
 
-        for (let c of colors) {
-            let bestDist = Infinity;
-            let bestIdx = 0;
+    for (let iter = 0; iter < iterations; iter++) {
+        const sumR = new Float64Array(k);
+        const sumG = new Float64Array(k);
+        const sumB = new Float64Array(k);
+        const cnt  = new Int32Array(k);
+
+        for (const c of colors) {
+            let bestDist = Infinity, bestIdx = 0;
             for (let i = 0; i < k; i++) {
-                let dSq = colorDistSq(c.r, c.g, c.b, centroids[i].r, centroids[i].g, centroids[i].b);
-                if (dSq < bestDist) {
-                    bestDist = dSq;
-                    bestIdx = i;
-                }
+                const dSq = colorDistSq(c.r, c.g, c.b, centroids[i].r, centroids[i].g, centroids[i].b);
+                if (dSq < bestDist) { bestDist = dSq; bestIdx = i; }
             }
-            clusters[bestIdx].push(c);
+            sumR[bestIdx] += c.r;
+            sumG[bestIdx] += c.g;
+            sumB[bestIdx] += c.b;
+            cnt[bestIdx]++;
         }
 
-        let newCentroids = [];
         for (let i = 0; i < k; i++) {
-            if (clusters[i].length > 0) {
-                let sumR = 0, sumG = 0, sumB = 0;
-                for (let c of clusters[i]) {
-                    sumR += c.r; sumG += c.g; sumB += c.b;
-                }
-                newCentroids.push({
-                    r: Math.round(sumR / clusters[i].length),
-                    g: Math.round(sumG / clusters[i].length),
-                    b: Math.round(sumB / clusters[i].length)
-                });
-            } else {
-                newCentroids.push(centroids[i]);
+            if (cnt[i] > 0) {
+                centroids[i] = {
+                    r: Math.round(sumR[i] / cnt[i]),
+                    g: Math.round(sumG[i] / cnt[i]),
+                    b: Math.round(sumB[i] / cnt[i])
+                };
             }
         }
-        centroids = newCentroids;
     }
     return centroids;
 }
