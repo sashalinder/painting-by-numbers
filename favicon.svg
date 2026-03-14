@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Paint palette body -->
+  <ellipse cx="30" cy="36" rx="26" ry="22" fill="#FFD166"/>
+  <!-- Thumb hole -->
+  <ellipse cx="42" cy="46" rx="6" ry="5" fill="#F7FFF7"/>
+  <!-- Paint dots -->
+  <circle cx="16" cy="28" r="6" fill="#FF6B6B"/>
+  <circle cx="28" cy="20" r="6" fill="#4ECDC4"/>
+  <circle cx="40" cy="22" r="6" fill="#A855F7"/>
+  <circle cx="48" cy="32" r="6" fill="#06D6A0"/>
+  <circle cx="18" cy="40" r="6" fill="#FFB703"/>
+  <!-- Paintbrush -->
+  <rect x="44" y="6" width="6" height="22" rx="3" fill="#8B4513" transform="rotate(35 44 6)"/>
+  <rect x="46" y="4" width="4" height="8" rx="2" fill="#C0C0C0" transform="rotate(35 44 6)"/>
+  <ellipse cx="56" cy="10" rx="3" ry="5" fill="#FF6B6B" transform="rotate(35 56 10)"/>
+</svg>
