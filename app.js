@@ -1,6 +1,6 @@
 const MAX_COLORS = 16;
-const DESKTOP_GRID_SIZE = 100;
-const MOBILE_GRID_SIZE = 20; // Fewer cells = bigger cells = easier for kids to tap
+const DESKTOP_GRID_SIZE = 120; // More cells = finer detail on desktop
+const MOBILE_GRID_SIZE = 40;  // Was 20 — now 40 for much better image recognition
 const DESKTOP_DISPLAY_SIZE = 1500;
 
 function getGridSize() {
@@ -11,6 +11,7 @@ let gameState = {
     gridData: [], // 2D array of color indices
     regionData: [], // 2D array to track what contiguous ID a square belongs to
     regionSizes: {}, // Map of region ID to total squares
+    regionRepCells: {}, // Map of region ID to one representative cell {x,y} for number display
     colorTotals: [], // Total squares for each color
     colorsCompleted: new Set(), // Track fully completed colors
     palette: [], // Array of RGB colors
@@ -286,6 +287,7 @@ function calculateRegions() {
     
     gameState.regionData = Array.from({length: rows}, () => Array(cols).fill(-1));
     gameState.regionSizes = {};
+    gameState.regionRepCells = {};
     gameState.colorTotals = new Array(MAX_COLORS).fill(0);
     
     let visited = Array.from({length: rows}, () => Array(cols).fill(false));
@@ -326,6 +328,18 @@ function calculateRegions() {
                     }
                 }
                 gameState.regionSizes[regionId] = size;
+
+                // Find the cell closest to the center of this region — this is where we draw the number
+                let sumX = 0, sumY = 0;
+                for (const c of queue) { sumX += c.x; sumY += c.y; }
+                const avgX = sumX / queue.length, avgY = sumY / queue.length;
+                let bestCell = queue[0], bestDist = Infinity;
+                for (const c of queue) {
+                    const d = (c.x - avgX) ** 2 + (c.y - avgY) ** 2;
+                    if (d < bestDist) { bestDist = d; bestCell = c; }
+                }
+                gameState.regionRepCells[regionId] = bestCell;
+
                 regionId++;
             }
         }
@@ -428,17 +442,14 @@ function drawGameCanvas() {
 
     if (isMobile()) {
         const isLandscape = window.matchMedia('(orientation: landscape)').matches;
-        // In landscape: no header, just controls bar (~40px) + small margin
-        // In portrait: header (~80px) + controls+FAB+ref (~130px)
         const reservedH = isLandscape ? 50 : 210;
         const availH = window.innerHeight - reservedH;
         const availW = window.innerWidth - 8;
-        // Fit to whichever dimension is tighter
         const byHeight = Math.floor(availH / rows);
         const byWidth = Math.floor(availW / cols);
-        cellSize = Math.max(12, Math.min(byWidth, byHeight));
+        cellSize = Math.max(5, Math.min(byWidth, byHeight)); // allow smaller cells — regions are tapped, not individual cells
     } else {
-        cellSize = Math.max(8, Math.floor(DESKTOP_DISPLAY_SIZE / Math.max(cols, rows)));
+        cellSize = Math.max(6, Math.floor(DESKTOP_DISPLAY_SIZE / Math.max(cols, rows)));
     }
 
     canvas.width = cols * cellSize;
@@ -472,19 +483,21 @@ function drawGameCanvas() {
         }
     }
     
-    // Draw crisp, thin cell boundaries so kids can see individual grid squares
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = '#D1D8DD';
-    ctx.beginPath();
-    for (let y = 0; y <= rows; y++) {
-        ctx.moveTo(0, y * cellSize);
-        ctx.lineTo(cols * cellSize, y * cellSize);
+    // Only draw the fine cell grid when cells are large enough to see it (≥10px)
+    if (cellSize >= 10) {
+        ctx.lineWidth = 0.5;
+        ctx.strokeStyle = '#E0E6EA';
+        ctx.beginPath();
+        for (let y = 0; y <= rows; y++) {
+            ctx.moveTo(0, y * cellSize);
+            ctx.lineTo(cols * cellSize, y * cellSize);
+        }
+        for (let x = 0; x <= cols; x++) {
+            ctx.moveTo(x * cellSize, 0);
+            ctx.lineTo(x * cellSize, rows * cellSize);
+        }
+        ctx.stroke();
     }
-    for (let x = 0; x <= cols; x++) {
-        ctx.moveTo(x * cellSize, 0);
-        ctx.lineTo(x * cellSize, rows * cellSize);
-    }
-    ctx.stroke();
 
     // Draw slightly thicker black boundaries around color groups for structure
     ctx.lineWidth = 1.5; 
@@ -511,34 +524,39 @@ function drawGameCanvas() {
     }
     ctx.stroke();
     
-    // Draw numbers!
+    // Draw ONE number per region (at its center-most cell) — like real paint-by-numbers
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    
-    for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-            let colorIdx = gameState.gridData[y][x];
-            if (colorIdx === -1) continue;
-            
-            let cellId = `${x},${y}`;
-            if (!gameState.paintedCells.has(cellId)) {
-                let isSelected = gameState.selectedColor === colorIdx;
-                
-                // Still use the magic trick: only show numbers for the target color!
-                if (gameState.selectedColor === null || isSelected) {
-                    
-                    if (isSelected) {
-                        ctx.fillStyle = '#FF4757';
-                        ctx.font = `900 ${Math.max(12, cellSize * 0.75)}px 'Nunito'`;
-                    } else {
-                        ctx.fillStyle = '#8B9BAA';
-                        ctx.font = `bold ${Math.max(10, cellSize * 0.6)}px 'Nunito'`;
-                    }
-                    
-                    ctx.fillText(colorIdx + 1, x * cellSize + cellSize/2, y * cellSize + cellSize/2);
-                }
-            }
+
+    // Build a lookup: "x,y" -> regionId for rep cells only
+    const repCellMap = {}; // "x,y" -> regionId
+    for (const regionId in gameState.regionRepCells) {
+        const rc = gameState.regionRepCells[regionId];
+        repCellMap[`${rc.x},${rc.y}`] = parseInt(regionId);
+    }
+
+    const numSize = Math.max(9, Math.min(cellSize * 0.85, 14));
+
+    for (const key in repCellMap) {
+        const regionId = repCellMap[key];
+        const [rx, ry] = key.split(',').map(Number);
+        const colorIdx = gameState.gridData[ry][rx];
+        if (colorIdx === -1) continue;
+
+        const cellId = `${rx},${ry}`;
+        if (gameState.paintedCells.has(cellId)) continue;
+
+        const isSelected = gameState.selectedColor === colorIdx;
+        if (gameState.selectedColor !== null && !isSelected) continue;
+
+        if (isSelected) {
+            ctx.fillStyle = '#FF4757';
+            ctx.font = `900 ${Math.max(10, numSize * 1.1)}px 'Nunito'`;
+        } else {
+            ctx.fillStyle = '#6B7E8F';
+            ctx.font = `bold ${numSize}px 'Nunito'`;
         }
+        ctx.fillText(colorIdx + 1, rx * cellSize + cellSize / 2, ry * cellSize + cellSize / 2);
     }
 }
 
@@ -824,6 +842,7 @@ function resetGame() {
         gridData: [],
         regionData: [],
         regionSizes: {},
+        regionRepCells: {},
         colorTotals: [],
         colorsCompleted: new Set(),
         palette: [],
