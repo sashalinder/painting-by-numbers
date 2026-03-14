@@ -1,5 +1,5 @@
 const MAX_COLORS = 12;
-const DESKTOP_GRID_SIZE = 50;
+const DESKTOP_GRID_SIZE = 75;
 const MOBILE_GRID_SIZE = 20; // Fewer cells = bigger cells = easier for kids to tap
 const DESKTOP_DISPLAY_SIZE = 1500;
 
@@ -53,6 +53,60 @@ function setupUI() {
     });
 
     document.getElementById('reset-button').addEventListener('click', resetGame);
+
+    document.getElementById('download-button').addEventListener('click', () => {
+        if (gameState.gridData.length === 0) {
+            alert('Paint something first! 🎨');
+            return;
+        }
+        // Render a clean save: painted cells show their color, unpainted stay white (no numbers)
+        const srcCanvas = document.getElementById('paint-canvas');
+        const saveCanvas = document.createElement('canvas');
+        saveCanvas.width = srcCanvas.width;
+        saveCanvas.height = srcCanvas.height;
+        const sCtx = saveCanvas.getContext('2d');
+
+        // White background
+        sCtx.fillStyle = '#FFFFFF';
+        sCtx.fillRect(0, 0, saveCanvas.width, saveCanvas.height);
+
+        const rows = gameState.gridData.length;
+        const cols = gameState.gridData[0].length;
+        const cellSize = srcCanvas.width / cols;
+
+        // Fill every cell with its color (painted or not — reveal the full picture)
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                const colorIdx = gameState.gridData[y][x];
+                if (colorIdx === -1) continue;
+                const c = gameState.palette[colorIdx];
+                const isPainted = gameState.paintedCells.has(`${x},${y}`);
+                if (isPainted) {
+                    sCtx.fillStyle = `rgb(${c.r},${c.g},${c.b})`;
+                } else {
+                    sCtx.fillStyle = '#F4F7F6';
+                }
+                sCtx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+            }
+        }
+
+        // Draw the same grid borders as the painting canvas
+        sCtx.lineWidth = 1;
+        sCtx.strokeStyle = '#D1D8DD';
+        sCtx.beginPath();
+        for (let y = 0; y <= rows; y++) {
+            sCtx.moveTo(0, y * cellSize); sCtx.lineTo(cols * cellSize, y * cellSize);
+        }
+        for (let x = 0; x <= cols; x++) {
+            sCtx.moveTo(x * cellSize, 0); sCtx.lineTo(x * cellSize, rows * cellSize);
+        }
+        sCtx.stroke();
+
+        const link = document.createElement('a');
+        link.download = 'my-masterpiece.png';
+        link.href = saveCanvas.toDataURL('image/png');
+        link.click();
+    });
 
     const canvas = document.getElementById('paint-canvas');
     canvas.addEventListener('click', handleCanvasClick);
