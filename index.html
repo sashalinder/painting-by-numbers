@@ -41,6 +41,20 @@
                         </div>
                         <!-- Reference image: overlays canvas top-right on desktop, fixed bottom-left on mobile -->
                         <img id="reference-image" class="reference-image hidden" alt="Original Photo" />
+                        <!-- Color progress bar: vertical below ref image on desktop, horizontal beside ref image on mobile -->
+                        <div id="color-progress" class="color-progress hidden">
+                            <div class="cp-swatch" id="cp-swatch"></div>
+                            <div class="cp-middle">
+                                <div class="cp-header">
+                                    <span class="cp-name" id="cp-name">Color 1</span>
+                                    <span class="cp-remaining" id="cp-remaining"></span>
+                                </div>
+                                <div class="cp-track">
+                                    <div class="cp-fill" id="cp-fill"></div>
+                                </div>
+                            </div>
+                            <div class="cp-pct" id="cp-pct">0%</div>
+                        </div>
                     </div>
 
                     <!-- The color palette (desktop only, hidden on mobile) -->
@@ -60,21 +74,6 @@
                 </div>
             </section>
         </main>
-    </div>
-
-    <!-- Color progress bar — shows how much of the selected color is left to paint -->
-    <div id="color-progress" class="color-progress hidden">
-        <div class="cp-swatch" id="cp-swatch"></div>
-        <div class="cp-middle">
-            <div class="cp-header">
-                <span class="cp-name" id="cp-name">Color 1</span>
-                <span class="cp-remaining" id="cp-remaining"></span>
-            </div>
-            <div class="cp-track">
-                <div class="cp-fill" id="cp-fill"></div>
-            </div>
-        </div>
-        <div class="cp-pct" id="cp-pct">0%</div>
     </div>
 
     <!-- Mobile floating color palette -->
