@@ -34,9 +34,9 @@ body {
 }
 
 .container {
-    max-width: 1200px;
+    max-width: 95%; /* Give it way more room on the screen! */
     width: 100%;
-    margin: 0 auto; /* Re-center the container after flexbox changes */
+    margin: 0 auto; 
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -158,11 +158,10 @@ main {
     padding: 10px;
     box-shadow: inset 0 0 10px rgba(0,0,0,0.05);
     border: 3px solid #E1E8EB;
-    max-height: 65vh; /* Letting it stretch a bit taller! */
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    overflow: auto; /* Allow scrolling inside the canvas if it gets huge */
+    /* We use block display to avoid flexbox center-clipping bugs on huge images! */
+    display: block; 
+    text-align: center;
+    overflow: auto; /* Adds scrollbars if the inner image gets too big! */
 }
 
 .reference-image {
@@ -180,9 +179,10 @@ main {
 }
 
 canvas {
-    display: block;
+    display: inline-block;
     margin: 0 auto;
-    max-height: 100%; /* Force the actual canvas element to shrink to the container bounds! */
+    /* Took off the max width/height limiters, the canvas is totally free! */
+    height: auto;
     width: auto;
     object-fit: contain;
     cursor: crosshair;
@@ -205,15 +205,15 @@ canvas {
 
 /* What a paint color look like */
 .color-swatch {
-    width: 60px;
-    height: 60px;
+    width: 45px; /* Shrunk from 60px so it takes up less space */
+    height: 45px; /* Shrunk from 60px */
     border-radius: 50%; /* Make them perfect circles like paint dollops! */
     cursor: pointer;
     display: flex;
     justify-content: center;
     align-items: center;
     font-weight: 900;
-    font-size: 1.2rem;
+    font-size: 1rem; /* Slightly smaller text */
     color: white;
     text-shadow: 1px 1px 2px rgba(0,0,0,0.5); /* Helps numbers show on light colors */
     box-shadow: 0 4px 10px rgba(0,0,0,0.1);
@@ -265,8 +265,8 @@ canvas {
 }
 
 .btn {
-    padding: 10px 20px; /* Slight button shrinking */
-    font-size: 1.1rem;
+    padding: 8px 16px; /* Super small buttons to save space */
+    font-size: 1rem;
     font-weight: 800;
     border: none;
     border-radius: 50px;
