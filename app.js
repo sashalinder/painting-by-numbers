@@ -311,6 +311,31 @@ function processImage(img) {
     // up the silhouette and replaces them with the dominant surrounding color.
     smoothGridData();
 
+    // Compact palette: remove colors that have zero cells after smoothing, and
+    // renumber gridData so the palette indices are contiguous (0, 1, 2, ...).
+    // This ensures the palette only shows colors that actually appear on the canvas.
+    {
+        const usedIndices = new Set();
+        for (const row of gameState.gridData) {
+            for (const c of row) { if (c !== -1) usedIndices.add(c); }
+        }
+        const oldToNew = {};
+        const compactedPalette = [];
+        gameState.palette.forEach((color, i) => {
+            if (usedIndices.has(i)) {
+                oldToNew[i] = compactedPalette.length;
+                compactedPalette.push(color);
+            }
+        });
+        for (let y = 0; y < gameState.gridData.length; y++) {
+            for (let x = 0; x < gameState.gridData[y].length; x++) {
+                const c = gameState.gridData[y][x];
+                if (c !== -1) gameState.gridData[y][x] = oldToNew[c];
+            }
+        }
+        gameState.palette = compactedPalette;
+    }
+
     // Calculate regions for cursor dynamic sizing
     calculateRegions();
 
@@ -624,8 +649,6 @@ function drawGameCanvas() {
         repCellMap[`${rc.x},${rc.y}`] = parseInt(regionId);
     }
 
-    const numSize = Math.max(9, Math.min(cellSize * 0.85, 14));
-
     for (const key in repCellMap) {
         const regionId = repCellMap[key];
         const [rx, ry] = key.split(',').map(Number);
@@ -636,14 +659,24 @@ function drawGameCanvas() {
         if (gameState.paintedCells.has(cellId)) continue;
 
         const isSelected = gameState.selectedColor === colorIdx;
-        if (gameState.selectedColor !== null && !isSelected) continue;
+
+        // Scale the number with the region's pixel area so large regions always have
+        // a clearly readable number even when individual cells are small.
+        const regionSize = gameState.regionSizes[regionId] || 1;
+        const numSize = Math.max(11, Math.min(Math.sqrt(regionSize * cellSize * cellSize) * 0.22, 20));
 
         if (isSelected) {
+            // Bright red + bold for the active color
             ctx.fillStyle = '#FF4757';
-            ctx.font = `900 ${Math.max(10, numSize * 1.1)}px 'Nunito'`;
+            ctx.font = `900 ${Math.round(numSize * 1.15)}px 'Nunito'`;
+        } else if (gameState.selectedColor !== null) {
+            // Always keep all other numbers visible (dim) so the canvas never looks blank
+            ctx.fillStyle = 'rgba(107, 126, 143, 0.38)';
+            ctx.font = `bold ${Math.round(numSize * 0.85)}px 'Nunito'`;
         } else {
+            // No color selected — show all numbers at full opacity
             ctx.fillStyle = '#6B7E8F';
-            ctx.font = `bold ${numSize}px 'Nunito'`;
+            ctx.font = `bold ${Math.round(numSize)}px 'Nunito'`;
         }
         ctx.fillText(colorIdx + 1, rx * cellSize + cellSize / 2, ry * cellSize + cellSize / 2);
     }
