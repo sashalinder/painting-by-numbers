@@ -1,5 +1,5 @@
-const MAX_COLORS = 12;
-const DESKTOP_GRID_SIZE = 75;
+const MAX_COLORS = 16;
+const DESKTOP_GRID_SIZE = 100;
 const MOBILE_GRID_SIZE = 20; // Fewer cells = bigger cells = easier for kids to tap
 const DESKTOP_DISPLAY_SIZE = 1500;
 
@@ -252,21 +252,22 @@ function processImage(img) {
 
     gameState.palette = kMeans(sampleColors, MAX_COLORS);
 
-    // Step 2: Draw at grid resolution and assign each cell to the nearest palette color
-    processingCanvas.width = cols;
-    processingCanvas.height = rows;
-    ctx.drawImage(img, 0, 0, cols, rows);
-    const pixels = ctx.getImageData(0, 0, cols, rows).data;
-
+    // Step 2: Assign each grid cell by sampling the CENTER pixel of its block from the
+    // high-res canvas — sharper color-region boundaries than averaging the whole block.
     gameState.gridData = [];
     for (let y = 0; y < rows; y++) {
         let row = [];
         for (let x = 0; x < cols; x++) {
-            let idx = (y * cols + x) * 4;
-            if (pixels[idx + 3] < 128) {
+            // Map grid cell center → high-res canvas pixel
+            const cx = Math.round((x + 0.5) * sampleW / cols);
+            const cy = Math.round((y + 0.5) * sampleH / rows);
+            const clampedX = Math.min(cx, sampleW - 1);
+            const clampedY = Math.min(cy, sampleH - 1);
+            const p = (clampedY * sampleW + clampedX) * 4;
+            if (sampleData[p + 3] < 128) {
                 row.push(-1);
             } else {
-                row.push(findNearestColorIndex(pixels[idx], pixels[idx + 1], pixels[idx + 2], gameState.palette));
+                row.push(findNearestColorIndex(sampleData[p], sampleData[p + 1], sampleData[p + 2], gameState.palette));
             }
         }
         gameState.gridData.push(row);
@@ -335,11 +336,11 @@ function kMeansInit(colors, k) {
     // k-means++ initialization: spread out initial centroids for reliable convergence
     const centroids = [{ ...colors[Math.floor(Math.random() * colors.length)] }];
     while (centroids.length < k) {
-        // For each color, find its distance squared to the nearest existing centroid
+        // Use perceptual distance to nearest existing centroid
         let distances = colors.map(c => {
             let minD = Infinity;
             for (const cent of centroids) {
-                const d = (c.r - cent.r) ** 2 + (c.g - cent.g) ** 2 + (c.b - cent.b) ** 2;
+                const d = colorDistSq(c.r, c.g, c.b, cent.r, cent.g, cent.b);
                 if (d < minD) minD = d;
             }
             return minD;
@@ -370,7 +371,7 @@ function kMeans(colors, k) {
             let bestDist = Infinity;
             let bestIdx = 0;
             for (let i = 0; i < k; i++) {
-                let dSq = (c.r - centroids[i].r)**2 + (c.g - centroids[i].g)**2 + (c.b - centroids[i].b)**2;
+                let dSq = colorDistSq(c.r, c.g, c.b, centroids[i].r, centroids[i].g, centroids[i].b);
                 if (dSq < bestDist) {
                     bestDist = dSq;
                     bestIdx = i;
@@ -400,12 +401,18 @@ function kMeans(colors, k) {
     return centroids;
 }
 
+// Perceptual color distance — weighted by human eye sensitivity (green > red > blue)
+function colorDistSq(r1, g1, b1, r2, g2, b2) {
+    const dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
+    return 2 * dr * dr + 4 * dg * dg + 3 * db * db;
+}
+
 function findNearestColorIndex(r, g, b, palette) {
     let bestDist = Infinity;
     let bestIdx = 0;
     for (let i = 0; i < palette.length; i++) {
         let p = palette[i];
-        let dSq = (r - p.r)**2 + (g - p.g)**2 + (b - p.b)**2;
+        let dSq = colorDistSq(r, g, b, p.r, p.g, p.b);
         if (dSq < bestDist) { bestDist = dSq; bestIdx = i; }
     }
     return bestIdx;
