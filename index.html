@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magic Paint by Numbers!</title>
+    <!-- We are using a super fun, rounded font! -->
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎨 Magic Paint by Numbers! 🖌️</h1>
+            <p>Turn any picture into a fun coloring game!</p>
+        </header>
+
+        <main>
+            <!-- Here is where we will drop our picture -->
+            <section id="upload-section" class="card">
+                <h2>Step 1: Pick a Picture!</h2>
+                <div id="drop-zone" class="drop-zone">
+                    <p>Click here or drag a picture to start!</p>
+                    <input type="file" id="image-input" accept="image/*" hidden>
+                </div>
+            </section>
+
+            <!-- This is the workspace where the magic happens, hidden at first -->
+            <section id="workspace-section" class="card hidden">
+                <h2>Step 2: Let's Paint!</h2>
+                
+                <div class="workspace-layout">
+                    <!-- The big canvas where our coloring page will go -->
+                    <div class="canvas-container">
+                        <canvas id="paint-canvas"></canvas>
+                    </div>
+
+                    <!-- The color palette -->
+                    <div class="palette-container">
+                        <h3>Your Paint Colors</h3>
+                        <div id="color-palette" class="color-palette">
+                            <!-- Colors will magically appear here! -->
+                        </div>
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button id="reset-button" class="btn primary-btn">Pick a New Picture</button>
+                    <button id="download-button" class="btn secondary-btn">Save My Masterpiece!</button>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Hidden canvas to help us do the computer math -->
+    <canvas id="processing-canvas" hidden></canvas>
+
+    <script src="app.js"></script>
+</body>
+</html>

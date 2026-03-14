@@ -1,0 +1,253 @@
+/* Let's make this app look amazing and fun! */
+
+:root {
+    /* Super bright, happy colors! */
+    --primary-color: #FF6B6B;
+    --secondary-color: #4ECDC4;
+    --background-color: #F7FFF7;
+    --text-color: #2F3542;
+    --card-bg: #FFFFFF;
+    
+    /* Making things nice, round, and bouncy */
+    --radius-large: 24px;
+    --radius-medium: 16px;
+    --shadow-soft: 0 8px 30px rgba(0, 0, 0, 0.08);
+    --shadow-hover: 0 12px 40px rgba(0, 0, 0, 0.12);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Nunito', sans-serif;
+    background-color: var(--background-color);
+    background-image: radial-gradient(#4ECDC4 2px, transparent 2px);
+    background-size: 40px 40px; 
+    color: var(--text-color);
+    line-height: 1.6;
+    padding: 10px; /* Reduced padding to save space */
+    height: 100vh; /* Lock body height */
+    overflow: hidden; /* Prevent body scroll entirely */
+}
+
+.container {
+    max-width: 1200px;
+    width: 100%;
+    margin: 0 auto; /* Re-center the container after flexbox changes */
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+header {
+    text-align: center;
+    margin-bottom: 10px; /* Reduced margins */
+    background: var(--card-bg);
+    padding: 15px; /* Reduced header size */
+    border-radius: var(--radius-large);
+    box-shadow: var(--shadow-soft);
+    border: 4px solid var(--primary-color);
+    flex-shrink: 0;
+}
+
+h1 {
+    font-size: 2rem; /* Shrink title */
+    font-weight: 900;
+    color: var(--primary-color);
+    text-shadow: 2px 2px 0px rgba(0,0,0,0.1);
+    margin-bottom: 5px;
+    letter-spacing: 1px;
+}
+
+h2 {
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--secondary-color);
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+h3 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 15px;
+    color: var(--text-color);
+}
+
+main {
+    flex-grow: 1; /* Allow main workspace to fill remaining screen */
+    display: flex;
+    flex-direction: column;
+    min-height: 0; /* Important for flex child scrolling! */
+}
+
+.card {
+    background: var(--card-bg);
+    border-radius: var(--radius-large);
+    padding: 20px; /* Reduced card padding */
+    box-shadow: var(--shadow-soft);
+    margin-bottom: 10px;
+    transition: transform 0.3s ease;
+    display: flex;
+    flex-direction: column;
+}
+
+#workspace-section {
+    flex-grow: 1; /* Allow workspace card to grow */
+    min-height: 0;
+}
+
+/* Magic classes to hide and show things */
+.hidden {
+    display: none !important;
+}
+
+/* ------------------------
+   Step 1: Upload Section
+   ------------------------ */
+
+.drop-zone {
+    border: 6px dashed var(--secondary-color);
+    border-radius: var(--radius-large);
+    padding: 60px 20px;
+    text-align: center;
+    cursor: pointer;
+    background-color: rgba(78, 205, 196, 0.05); /* very light blue hint */
+    transition: all 0.3s ease;
+}
+
+.drop-zone:hover {
+    background-color: rgba(78, 205, 196, 0.15);
+    transform: scale(1.02);
+    box-shadow: var(--shadow-hover);
+}
+
+.drop-zone p {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--secondary-color);
+}
+
+/* ------------------------
+   Step 2: Workspace Section
+   ------------------------ */
+
+.workspace-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 15px; /* Tighter gap */
+    flex-grow: 1; 
+    min-height: 0;
+}
+
+.canvas-container {
+    flex-grow: 1; /* Allow canvas container to absorb all remaining free height! */
+    min-height: 0;
+    background: white;
+    border-radius: var(--radius-medium);
+    padding: 10px;
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.05);
+    border: 3px solid #E1E8EB;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: auto; /* Allow scrolling inside the canvas if it gets huge */
+}
+
+canvas {
+    display: block;
+    margin: 0 auto;
+    max-height: 100%; /* Force the actual canvas element to shrink to the container bounds! */
+    width: auto;
+    object-fit: contain;
+    cursor: crosshair;
+}
+
+.palette-container {
+    flex-shrink: 0; /* Do not let palette shrink */
+    background: #F8F9FA;
+    padding: 15px;
+    border-radius: var(--radius-medium);
+    border: 3px solid #E1E8EB;
+}
+
+.color-palette {
+    display: flex;
+    flex-wrap: wrap; /* Adjusts properly */
+    justify-content: center;
+    gap: 10px;
+}
+
+/* What a paint color look like */
+.color-swatch {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%; /* Make them perfect circles like paint dollops! */
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-weight: 900;
+    font-size: 1.2rem;
+    color: white;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.5); /* Helps numbers show on light colors */
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); /* Bouncy transition! */
+    border: 3px solid white;
+}
+
+.color-swatch:hover {
+    transform: scale(1.15) translateY(-5px);
+}
+
+.color-swatch.active {
+    transform: scale(1.2);
+    border-color: var(--text-color);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+}
+
+/* ------------------------
+   Buttons
+   ------------------------ */
+
+.controls {
+    display: flex;
+    flex-shrink: 0;
+    gap: 15px;
+    justify-content: center;
+    margin-top: 15px;
+}
+
+.btn {
+    padding: 10px 20px; /* Slight button shrinking */
+    font-size: 1.1rem;
+    font-weight: 800;
+    border: none;
+    border-radius: 50px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+.btn:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+}
+
+.btn:active {
+    transform: translateY(1px);
+}
+
+.primary-btn {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.secondary-btn {
+    background-color: var(--secondary-color);
+    color: white;
+}
