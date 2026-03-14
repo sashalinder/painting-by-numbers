@@ -1,6 +1,11 @@
-const GRID_SIZE = 50; // Reverted back to the "sweet spot" size from the second version
-const MAX_COLORS = 12; 
-const DISPLAY_SIZE = 1500; // Giant high res internal size! CSS will cleanly shrink it down to fit the screen bounds.
+const MAX_COLORS = 12;
+const DESKTOP_GRID_SIZE = 50;
+const MOBILE_GRID_SIZE = 20; // Fewer cells = bigger cells = easier for kids to tap
+const DESKTOP_DISPLAY_SIZE = 1500;
+
+function getGridSize() {
+    return isMobile() ? MOBILE_GRID_SIZE : DESKTOP_GRID_SIZE;
+}
 
 let gameState = {
     gridData: [], // 2D array of color indices
@@ -17,39 +22,115 @@ document.addEventListener('DOMContentLoaded', () => {
     setupUI();
 });
 
+function isMobile() {
+    return window.matchMedia('(max-width: 768px)').matches
+        || window.matchMedia('(max-height: 500px) and (orientation: landscape)').matches;
+}
+
 function setupUI() {
     const dropZone = document.getElementById('drop-zone');
     const imageInput = document.getElementById('image-input');
-    
+
     dropZone.addEventListener('click', () => imageInput.click());
-    
+
     dropZone.addEventListener('dragover', (e) => {
         e.preventDefault();
         dropZone.style.borderColor = 'var(--primary-color)';
     });
-    
+
     dropZone.addEventListener('dragleave', () => {
         dropZone.style.borderColor = 'var(--secondary-color)';
     });
-    
+
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.style.borderColor = 'var(--secondary-color)';
         if (e.dataTransfer.files.length) handleImage(e.dataTransfer.files[0]);
     });
-    
+
     imageInput.addEventListener('change', (e) => {
         if (e.target.files.length) handleImage(e.target.files[0]);
     });
 
     document.getElementById('reset-button').addEventListener('click', resetGame);
-    
+
     const canvas = document.getElementById('paint-canvas');
     canvas.addEventListener('click', handleCanvasClick);
     canvas.addEventListener('mousemove', handleCanvasMouseMove);
     canvas.addEventListener('mouseleave', () => {
         canvas.style.cursor = 'crosshair';
     });
+
+    // Touch support for mobile painting
+    canvas.addEventListener('touchstart', handleCanvasTouch, { passive: false });
+
+    // Mobile floating palette setup
+    setupMobilePalette();
+}
+
+function setupMobilePalette() {
+    const fab = document.getElementById('mobile-palette-fab');
+    const popup = document.getElementById('mobile-palette-popup');
+    const overlay = document.getElementById('mobile-palette-overlay');
+    const closeBtn = document.getElementById('mobile-palette-close');
+
+    fab.addEventListener('click', () => {
+        popup.classList.remove('hidden');
+        popup.classList.add('visible');
+        overlay.classList.remove('hidden');
+        overlay.classList.add('visible');
+    });
+
+    function closePalette() {
+        popup.classList.add('hidden');
+        popup.classList.remove('visible');
+        overlay.classList.add('hidden');
+        overlay.classList.remove('visible');
+    }
+
+    closeBtn.addEventListener('click', closePalette);
+    overlay.addEventListener('click', closePalette);
+}
+
+function showMobileFab() {
+    const fab = document.getElementById('mobile-palette-fab');
+    fab.classList.remove('hidden');
+    fab.classList.add('visible');
+}
+
+function hideMobileFab() {
+    const fab = document.getElementById('mobile-palette-fab');
+    fab.classList.add('hidden');
+    fab.classList.remove('visible');
+    // Also close popup
+    document.getElementById('mobile-palette-popup').classList.add('hidden');
+    document.getElementById('mobile-palette-popup').classList.remove('visible');
+    document.getElementById('mobile-palette-overlay').classList.add('hidden');
+    document.getElementById('mobile-palette-overlay').classList.remove('visible');
+}
+
+function updateMobileFabColor() {
+    const fab = document.getElementById('mobile-palette-fab');
+    const preview = fab.querySelector('.fab-swatch-preview');
+
+    if (gameState.selectedColor !== null) {
+        const c = gameState.palette[gameState.selectedColor];
+        preview.style.backgroundColor = `rgb(${c.r}, ${c.g}, ${c.b})`;
+        fab.classList.add('has-color');
+    } else {
+        fab.classList.remove('has-color');
+    }
+}
+
+function handleCanvasTouch(e) {
+    e.preventDefault();
+    const touch = e.touches[0];
+    // Create a synthetic click event from the touch
+    const clickEvent = new MouseEvent('click', {
+        clientX: touch.clientX,
+        clientY: touch.clientY
+    });
+    e.target.dispatchEvent(clickEvent);
 }
 
 function handleImage(file) {
@@ -60,6 +141,10 @@ function handleImage(file) {
 
     document.getElementById('upload-section').classList.add('hidden');
     document.getElementById('workspace-section').classList.remove('hidden');
+
+    if (isMobile()) {
+        showMobileFab();
+    }
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -80,12 +165,13 @@ function handleImage(file) {
 function processImage(img) {
     const processingCanvas = document.getElementById('processing-canvas');
     
-    let cols = GRID_SIZE;
-    let rows = GRID_SIZE;
+    const gridSize = getGridSize();
+    let cols = gridSize;
+    let rows = gridSize;
     if (img.width > img.height) {
-        rows = Math.floor(GRID_SIZE * (img.height / img.width));
+        rows = Math.floor(gridSize * (img.height / img.width));
     } else {
-        cols = Math.floor(GRID_SIZE * (img.width / img.height));
+        cols = Math.floor(gridSize * (img.width / img.height));
     }
     
     processingCanvas.width = cols;
@@ -248,8 +334,23 @@ function drawGameCanvas() {
     const cols = gameState.gridData[0].length;
     
     const canvas = document.getElementById('paint-canvas');
-    const cellSize = Math.max(8, Math.floor(DISPLAY_SIZE / Math.max(cols, rows)));
-    
+    let cellSize;
+
+    if (isMobile()) {
+        const isLandscape = window.matchMedia('(orientation: landscape)').matches;
+        // In landscape: no header, just controls bar (~40px) + small margin
+        // In portrait: header (~80px) + controls+FAB+ref (~130px)
+        const reservedH = isLandscape ? 50 : 210;
+        const availH = window.innerHeight - reservedH;
+        const availW = window.innerWidth - 8;
+        // Fit to whichever dimension is tighter
+        const byHeight = Math.floor(availH / rows);
+        const byWidth = Math.floor(availW / cols);
+        cellSize = Math.max(12, Math.min(byWidth, byHeight));
+    } else {
+        cellSize = Math.max(8, Math.floor(DESKTOP_DISPLAY_SIZE / Math.max(cols, rows)));
+    }
+
     canvas.width = cols * cellSize;
     canvas.height = rows * cellSize;
     
@@ -354,33 +455,59 @@ function drawGameCanvas() {
 function buildPaletteUI() {
     const container = document.getElementById('color-palette');
     container.innerHTML = '';
-    
-    gameState.palette.forEach((color, index) => {
-        let swatch = document.createElement('div');
-        swatch.className = 'color-swatch';
-        swatch.style.backgroundColor = `rgb(${color.r}, ${color.g}, ${color.b})`;
-        swatch.innerText = index + 1;
-        
-        if (gameState.colorsCompleted.has(index)) {
-            swatch.classList.add('completed');
-        }
-        
-        let brightness = (color.r * 299 + color.g * 587 + color.b * 114) / 1000;
-        swatch.style.color = brightness > 128 ? '#2F3542' : '#FFFFFF';
-        
-        swatch.addEventListener('click', () => {
-            document.querySelectorAll('.color-swatch').forEach(el => el.classList.remove('active'));
-            swatch.classList.add('active');
-            gameState.selectedColor = index;
-            
-            // Reset cursor immediately if moving fast
-            const canvas = document.getElementById('paint-canvas');
-            canvas.style.cursor = 'crosshair';
 
-            drawGameCanvas();
-        });
-        
-        container.appendChild(swatch);
+    // Also build mobile palette
+    const mobileContainer = document.getElementById('mobile-color-palette');
+    if (mobileContainer) mobileContainer.innerHTML = '';
+
+    gameState.palette.forEach((color, index) => {
+        let brightness = (color.r * 299 + color.g * 587 + color.b * 114) / 1000;
+        let textColor = brightness > 128 ? '#2F3542' : '#FFFFFF';
+
+        function createSwatch() {
+            let swatch = document.createElement('div');
+            swatch.className = 'color-swatch';
+            swatch.style.backgroundColor = `rgb(${color.r}, ${color.g}, ${color.b})`;
+            swatch.innerText = index + 1;
+            swatch.style.color = textColor;
+
+            if (gameState.colorsCompleted.has(index)) {
+                swatch.classList.add('completed');
+            }
+            if (gameState.selectedColor === index) {
+                swatch.classList.add('active');
+            }
+
+            swatch.addEventListener('click', () => {
+                document.querySelectorAll('.color-swatch').forEach(el => el.classList.remove('active'));
+                gameState.selectedColor = index;
+
+                // Mark active on both palettes
+                document.querySelectorAll('.color-swatch').forEach(el => {
+                    if (el.innerText == String(index + 1)) el.classList.add('active');
+                });
+
+                const canvas = document.getElementById('paint-canvas');
+                canvas.style.cursor = 'crosshair';
+
+                updateMobileFabColor();
+
+                // Close mobile popup after selection
+                if (isMobile()) {
+                    document.getElementById('mobile-palette-popup').classList.add('hidden');
+                    document.getElementById('mobile-palette-popup').classList.remove('visible');
+                    document.getElementById('mobile-palette-overlay').classList.add('hidden');
+                    document.getElementById('mobile-palette-overlay').classList.remove('visible');
+                }
+
+                drawGameCanvas();
+            });
+
+            return swatch;
+        }
+
+        container.appendChild(createSwatch());
+        if (mobileContainer) mobileContainer.appendChild(createSwatch());
     });
 }
 
@@ -546,6 +673,7 @@ function handleCanvasMouseMove(e) {
 function resetGame() {
     document.getElementById('workspace-section').classList.add('hidden');
     document.getElementById('upload-section').classList.remove('hidden');
+    hideMobileFab();
     gameState = {
         gridData: [],
         regionData: [],

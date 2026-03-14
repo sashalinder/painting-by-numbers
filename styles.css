@@ -29,7 +29,7 @@ body {
     color: var(--text-color);
     line-height: 1.6;
     padding: 10px; /* Reduced padding to save space */
-    height: 100vh; /* Lock body height */
+    height: 100dvh; /* Lock body height using dynamic viewport units for mobile! */
     overflow: hidden; /* Prevent body scroll entirely */
 }
 
@@ -171,24 +171,38 @@ main {
     overflow: auto; /* Adds scrollbars if the inner image gets too big! */
 }
 
+.bottom-tools {
+    display: flex;
+    gap: 15px;
+    flex-shrink: 0;
+    align-items: center;
+}
+
+.palette-container {
+    flex-grow: 1; /* Allow palette to take main horizontal space */
+    background: #F8F9FA;
+    padding: 15px;
+    border-radius: var(--radius-medium);
+    border: 3px solid #E1E8EB;
+}
+
+/* Desktop: reference image overlays top-right of canvas */
 .reference-image {
     position: absolute;
-    top: 15px;
-    right: 15px;
-    width: 100px;
-    height: 100px;
+    top: 16px;
+    right: 16px;
+    width: 120px;
+    height: 120px;
     object-fit: cover;
     border-radius: var(--radius-medium);
     border: 3px solid white;
     box-shadow: var(--shadow-hover);
     z-index: 10;
-    pointer-events: none; /* Ignore clicks so you can color under it! */
 }
 
-canvas {
+#paint-canvas {
     display: inline-block;
     margin: 0 auto;
-    /* Took off the max width/height limiters, the canvas is totally free! */
     height: auto;
     width: auto;
     object-fit: contain;
@@ -300,4 +314,318 @@ canvas {
 .secondary-btn {
     background-color: var(--secondary-color);
     color: white;
+}
+
+/* ------------------------
+   Mobile Floating Palette
+   ------------------------ */
+
+.mobile-fab {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 6px 20px rgba(255, 107, 107, 0.4);
+    z-index: 1000;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    border: 3px solid white;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mobile-fab:active {
+    transform: scale(0.92);
+}
+
+.mobile-fab .fab-swatch-preview {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 2px solid white;
+    display: none;
+}
+
+.mobile-fab.has-color .fab-label {
+    font-size: 0.7rem;
+}
+
+.mobile-fab.has-color .fab-swatch-preview {
+    display: block;
+}
+
+.mobile-fab .fab-label {
+    font-size: 1.5rem;
+    line-height: 1;
+}
+
+.mobile-palette-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 1001;
+}
+
+.mobile-palette-popup {
+    position: fixed;
+    bottom: 100px;
+    right: 16px;
+    left: 16px;
+    max-width: 360px;
+    margin-left: auto;
+    background: white;
+    border-radius: var(--radius-large);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+    z-index: 1002;
+    padding: 16px;
+    animation: slideUp 0.25s ease-out;
+}
+
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.mobile-palette-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    font-weight: 800;
+    font-size: 1.1rem;
+    color: var(--text-color);
+}
+
+.mobile-palette-close-btn {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--text-color);
+    padding: 4px 8px;
+    line-height: 1;
+}
+
+.mobile-color-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    justify-items: center;
+}
+
+.mobile-color-grid .color-swatch {
+    width: 52px;
+    height: 52px;
+    font-size: 1rem;
+}
+
+/* By default hide mobile elements on desktop */
+.mobile-fab,
+.mobile-palette-popup,
+.mobile-palette-overlay {
+    display: none;
+}
+
+/* ------------------------
+   Mobile Responsiveness
+   ------------------------ */
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
+    body {
+        padding: 0;
+        height: 100dvh;
+        overflow: hidden;
+    }
+
+    /* Compact header — show full title including author */
+    header {
+        padding: 8px 12px;
+        margin-bottom: 2px;
+        border-radius: 0;
+        border-width: 2px;
+    }
+
+    h1 {
+        font-size: 1.2rem;
+        margin-bottom: 2px;
+    }
+
+    header > p {
+        font-size: 0.8rem;
+        margin-bottom: 0;
+    }
+
+    .author-name {
+        font-size: 0.85rem;
+        margin-top: 2px;
+    }
+
+    /* Hide step 2 title on mobile */
+    #workspace-section > h2 {
+        display: none;
+    }
+
+    .drop-zone {
+        padding: 40px 10px;
+    }
+
+    .drop-zone p {
+        font-size: 1.1rem;
+    }
+
+    .container {
+        height: 100%;
+        max-width: 100%;
+    }
+
+    /* Workspace fills everything between header and controls */
+    #workspace-section {
+        border-radius: 0;
+        margin-bottom: 0;
+        padding: 2px;
+        padding-bottom: 48px; /* Room for fixed controls bar */
+        flex-grow: 1;
+        min-height: 0;
+    }
+
+    .workspace-layout {
+        gap: 0;
+        flex-grow: 1;
+        min-height: 0;
+    }
+
+    /* Hide inline palette on mobile */
+    .bottom-tools {
+        display: none !important;
+    }
+
+    /* Canvas wrapper fills all remaining height */
+    .canvas-wrapper {
+        flex-grow: 1;
+        min-height: 0;
+    }
+
+    .canvas-container {
+        padding: 2px;
+        border: none;
+        border-radius: 0;
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
+        height: 100%;
+    }
+
+    /* On mobile, canvas renders at its natural pixel size (sized by JS to fill viewport) */
+    #paint-canvas {
+        display: block;
+    }
+
+    /* Reference image: fixed bottom-left, just above the controls bar */
+    .reference-image {
+        position: fixed;
+        bottom: 50px;
+        left: 8px;
+        width: 64px;
+        height: 64px;
+        border-radius: 12px;
+        border: 2px solid white;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        z-index: 1000;
+        top: auto;
+        right: auto;
+    }
+
+    /* Controls: fixed bottom bar */
+    .controls {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: white;
+        padding: 6px 12px;
+        margin-top: 0;
+        gap: 8px;
+        box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.08);
+        z-index: 999;
+        border-radius: 0;
+    }
+
+    .btn {
+        padding: 8px 14px;
+        font-size: 0.85rem;
+        flex: 1;
+    }
+
+    /* FAB sits above controls */
+    .mobile-fab {
+        bottom: 60px;
+        right: 12px;
+    }
+
+    .mobile-palette-popup {
+        bottom: 130px;
+    }
+
+    .mobile-fab.visible {
+        display: flex;
+    }
+
+    .mobile-palette-popup.visible {
+        display: block;
+    }
+
+    .mobile-palette-overlay.visible {
+        display: block;
+    }
+
+    .card {
+        margin-bottom: 0;
+    }
+}
+
+/* Landscape mobile — hide header, canvas fills entire screen */
+@media (max-height: 500px) and (orientation: landscape) {
+    header {
+        display: none;
+    }
+
+    #workspace-section > h2 {
+        display: none;
+    }
+
+    #workspace-section {
+        padding: 0;
+        padding-bottom: 40px;
+        box-shadow: none;
+    }
+
+    .controls {
+        padding: 4px 12px;
+    }
+
+    .btn {
+        padding: 6px 12px;
+        font-size: 0.8rem;
+    }
+
+    .reference-image {
+        width: 48px;
+        height: 48px;
+        bottom: 44px;
+    }
+
+    .mobile-fab {
+        bottom: 44px;
+        width: 48px;
+        height: 48px;
+    }
+
+    .mobile-palette-popup {
+        bottom: 100px;
+    }
 }

@@ -38,14 +38,17 @@
                         <div class="canvas-container">
                             <canvas id="paint-canvas"></canvas>
                         </div>
+                        <!-- Reference image: overlays canvas top-right on desktop, fixed bottom-left on mobile -->
                         <img id="reference-image" class="reference-image hidden" alt="Original Photo" />
                     </div>
 
-                    <!-- The color palette -->
-                    <div class="palette-container">
-                        <h3>Your Paint Colors</h3>
-                        <div id="color-palette" class="color-palette">
-                            <!-- Colors will magically appear here! -->
+                    <!-- The color palette (desktop only, hidden on mobile) -->
+                    <div class="bottom-tools">
+                        <div class="palette-container">
+                            <h3>Your Paint Colors</h3>
+                            <div id="color-palette" class="color-palette">
+                                <!-- Colors will magically appear here! -->
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -57,6 +60,20 @@
             </section>
         </main>
     </div>
+
+    <!-- Mobile floating color palette -->
+    <div id="mobile-palette-fab" class="mobile-fab hidden">
+        <div class="fab-swatch-preview"></div>
+        <span class="fab-label">🎨</span>
+    </div>
+    <div id="mobile-palette-popup" class="mobile-palette-popup hidden">
+        <div class="mobile-palette-header">
+            <span>Pick a Color</span>
+            <button id="mobile-palette-close" class="mobile-palette-close-btn">&times;</button>
+        </div>
+        <div id="mobile-color-palette" class="mobile-color-grid"></div>
+    </div>
+    <div id="mobile-palette-overlay" class="mobile-palette-overlay hidden"></div>
 
     <!-- Hidden canvas to help us do the computer math -->
     <canvas id="processing-canvas" hidden></canvas>
