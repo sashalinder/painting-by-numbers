@@ -1,6 +1,6 @@
 const MAX_COLORS = 16;
 const DESKTOP_GRID_SIZE = 120; // More cells = finer detail on desktop
-const MOBILE_GRID_SIZE = 45;  // More cells = much better image recognition; kids tap regions not individual cells
+const MOBILE_GRID_SIZE = 30;  // Balanced: good image quality with cells big enough for kids to tap
 const DESKTOP_DISPLAY_SIZE = 1500;
 
 function getGridSize() {
@@ -311,6 +311,11 @@ function processImage(img) {
     // up the silhouette and replaces them with the dominant surrounding color.
     smoothGridData();
 
+    // Merge regions that are too small for a kid to comfortably tap.
+    // Any region with fewer than MIN_REGION_CELLS gets absorbed into whichever
+    // neighbouring region it shares the most border with.
+    eliminateSmallRegions(isMobile() ? 6 : 3);
+
     // Compact palette: remove colors that have zero cells after smoothing, and
     // renumber gridData so the palette indices are contiguous (0, 1, 2, ...).
     // This ensures the palette only shows colors that actually appear on the canvas.
@@ -392,6 +397,83 @@ function smoothGridData() {
         }
 
         gameState.gridData = newGrid;
+    }
+}
+
+// Merge every region smaller than minCells into its most-touching neighbour.
+// Runs up to 8 passes so that merging small regions doesn't create new small ones.
+function eliminateSmallRegions(minCells) {
+    const rows = gameState.gridData.length;
+    const cols = gameState.gridData[0].length;
+
+    for (let pass = 0; pass < 8; pass++) {
+        // BFS-label every connected region
+        const label = Array.from({length: rows}, () => new Array(cols).fill(-1));
+        const regionColor = [];
+        const regionCells = [];
+        let nextLabel = 0;
+        const visited = Array.from({length: rows}, () => new Array(cols).fill(false));
+
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                if (!visited[y][x] && gameState.gridData[y][x] !== -1) {
+                    const color = gameState.gridData[y][x];
+                    const cells = [];
+                    const queue = [{x, y}];
+                    visited[y][x] = true;
+                    let head = 0;
+                    while (head < queue.length) {
+                        const c = queue[head++];
+                        label[c.y][c.x] = nextLabel;
+                        cells.push(c);
+                        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+                            const nx = c.x + dx, ny = c.y + dy;
+                            if (nx >= 0 && nx < cols && ny >= 0 && ny < rows
+                                && !visited[ny][nx] && gameState.gridData[ny][nx] === color) {
+                                visited[ny][nx] = true;
+                                queue.push({x: nx, y: ny});
+                            }
+                        }
+                    }
+                    regionColor[nextLabel] = color;
+                    regionCells[nextLabel] = cells;
+                    nextLabel++;
+                }
+            }
+        }
+
+        let changed = false;
+        for (let rId = 0; rId < nextLabel; rId++) {
+            if (regionCells[rId].length >= minCells) continue;
+
+            // Count shared-border length with each adjacent colour
+            const borderCount = {};
+            for (const {x, y} of regionCells[rId]) {
+                for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+                    const nx = x + dx, ny = y + dy;
+                    if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
+                        const nl = label[ny][nx];
+                        if (nl !== -1 && nl !== rId) {
+                            const nc = regionColor[nl];
+                            borderCount[nc] = (borderCount[nc] || 0) + 1;
+                        }
+                    }
+                }
+            }
+
+            // Absorb into the most-touching neighbour
+            let bestColor = regionColor[rId], bestCount = 0;
+            for (const [c, cnt] of Object.entries(borderCount)) {
+                if (cnt > bestCount) { bestCount = cnt; bestColor = parseInt(c); }
+            }
+            if (bestColor !== regionColor[rId]) {
+                for (const {x, y} of regionCells[rId]) {
+                    gameState.gridData[y][x] = bestColor;
+                }
+                changed = true;
+            }
+        }
+        if (!changed) break;
     }
 }
 
@@ -561,7 +643,7 @@ function drawGameCanvas() {
         const availW = window.innerWidth - 8;
         const byHeight = Math.floor(availH / rows);
         const byWidth = Math.floor(availW / cols);
-        cellSize = Math.max(8, Math.min(byWidth, byHeight)); // 8px minimum — kids tap entire regions (which are many cells), not individual cells
+        cellSize = Math.max(12, Math.min(byWidth, byHeight)); // 12px minimum for comfortable tapping
     } else {
         cellSize = Math.max(6, Math.floor(DESKTOP_DISPLAY_SIZE / Math.max(cols, rows)));
     }
