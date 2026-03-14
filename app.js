@@ -1,6 +1,6 @@
 const MAX_COLORS = 16;
 const DESKTOP_GRID_SIZE = 120; // More cells = finer detail on desktop
-const MOBILE_GRID_SIZE = 40;  // Was 20 — now 40 for much better image recognition
+const MOBILE_GRID_SIZE = 26;  // ~14-15px cells on a 390px phone — big enough for kids to tap
 const DESKTOP_DISPLAY_SIZE = 1500;
 
 function getGridSize() {
@@ -253,32 +253,121 @@ function processImage(img) {
 
     gameState.palette = kMeans(sampleColors, MAX_COLORS);
 
-    // Step 2: Assign each grid cell by sampling the CENTER pixel of its block from the
-    // high-res canvas — sharper color-region boundaries than averaging the whole block.
+    // Step 2: Assign each grid cell by finding the MOST COMMON palette color in its entire
+    // block (mode) — far more robust than a single center pixel, captures the true dominant
+    // color of each region and correctly handles noisy/edge pixels.
+    // Cache nearest-palette lookups to avoid redundant computation for repeated colors.
+    const nearestColorCache = new Map();
+    const cachedNearest = (r, g, b) => {
+        const key = (r << 16) | (g << 8) | b;
+        let idx = nearestColorCache.get(key);
+        if (idx === undefined) {
+            idx = findNearestColorIndex(r, g, b, gameState.palette);
+            nearestColorCache.set(key, idx);
+        }
+        return idx;
+    };
+
+    const blockW = Math.max(1, Math.floor(sampleW / cols));
+    const blockH = Math.max(1, Math.floor(sampleH / rows));
+
     gameState.gridData = [];
     for (let y = 0; y < rows; y++) {
         let row = [];
         for (let x = 0; x < cols; x++) {
-            // Map grid cell center → high-res canvas pixel
-            const cx = Math.round((x + 0.5) * sampleW / cols);
-            const cy = Math.round((y + 0.5) * sampleH / rows);
-            const clampedX = Math.min(cx, sampleW - 1);
-            const clampedY = Math.min(cy, sampleH - 1);
-            const p = (clampedY * sampleW + clampedX) * 4;
-            if (sampleData[p + 3] < 128) {
+            const startX = x * blockW;
+            const startY = y * blockH;
+            const endX = Math.min(startX + blockW, sampleW);
+            const endY = Math.min(startY + blockH, sampleH);
+
+            // Count which palette color appears most often in this block
+            const colorCounts = new Array(gameState.palette.length).fill(0);
+            let validPixels = 0;
+
+            for (let py = startY; py < endY; py++) {
+                for (let px = startX; px < endX; px++) {
+                    const p = (py * sampleW + px) * 4;
+                    if (sampleData[p + 3] >= 128) {
+                        colorCounts[cachedNearest(sampleData[p], sampleData[p + 1], sampleData[p + 2])]++;
+                        validPixels++;
+                    }
+                }
+            }
+
+            if (validPixels === 0) {
                 row.push(-1);
             } else {
-                row.push(findNearestColorIndex(sampleData[p], sampleData[p + 1], sampleData[p + 2], gameState.palette));
+                let bestColor = 0, bestCount = -1;
+                for (let i = 0; i < colorCounts.length; i++) {
+                    if (colorCounts[i] > bestCount) { bestCount = colorCounts[i]; bestColor = i; }
+                }
+                row.push(bestColor);
             }
         }
         gameState.gridData.push(row);
     }
+
+    // Smooth out isolated noise cells — removes single-pixel speckles that break
+    // up the silhouette and replaces them with the dominant surrounding color.
+    smoothGridData();
 
     // Calculate regions for cursor dynamic sizing
     calculateRegions();
 
     drawGameCanvas();
     buildPaletteUI();
+}
+
+// Remove isolated noise cells by replacing them with their most common neighbor color.
+// Run 2 passes: first pass removes isolated single cells, second pass cleans up any
+// new gaps created by the first pass — giving clean silhouette-like region boundaries.
+function smoothGridData() {
+    const rows = gameState.gridData.length;
+    const cols = gameState.gridData[0].length;
+
+    for (let pass = 0; pass < 2; pass++) {
+        const newGrid = gameState.gridData.map(row => [...row]);
+
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                const curr = gameState.gridData[y][x];
+                if (curr === -1) continue;
+
+                // Count colors among 4 direct neighbors
+                const neighborCounts = {};
+                let sameCount = 0;
+                let totalNeighbors = 0;
+
+                const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+                for (const [dx, dy] of dirs) {
+                    const nx = x + dx, ny = y + dy;
+                    if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
+                        const nc = gameState.gridData[ny][nx];
+                        if (nc !== -1) {
+                            neighborCounts[nc] = (neighborCounts[nc] || 0) + 1;
+                            totalNeighbors++;
+                            if (nc === curr) sameCount++;
+                        }
+                    }
+                }
+
+                // Replace cell if it has 0 or 1 same-color direct neighbors (it's isolated/noise)
+                if (sameCount <= 1 && totalNeighbors >= 3) {
+                    let bestColor = curr, bestCount = sameCount;
+                    for (const colorStr in neighborCounts) {
+                        const c = parseInt(colorStr);
+                        if (c !== curr && neighborCounts[colorStr] > bestCount) {
+                            bestCount = neighborCounts[colorStr];
+                            bestColor = c;
+                        }
+                    }
+                    newGrid[y][x] = bestColor;
+                }
+            }
+        }
+
+        gameState.gridData = newGrid;
+    }
 }
 
 function calculateRegions() {
@@ -447,7 +536,7 @@ function drawGameCanvas() {
         const availW = window.innerWidth - 8;
         const byHeight = Math.floor(availH / rows);
         const byWidth = Math.floor(availW / cols);
-        cellSize = Math.max(5, Math.min(byWidth, byHeight)); // allow smaller cells — regions are tapped, not individual cells
+        cellSize = Math.max(14, Math.min(byWidth, byHeight)); // 14px minimum so numbers are readable and kids can tap
     } else {
         cellSize = Math.max(6, Math.floor(DESKTOP_DISPLAY_SIZE / Math.max(cols, rows)));
     }
