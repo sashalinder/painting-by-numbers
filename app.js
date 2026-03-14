@@ -1,6 +1,6 @@
 const MAX_COLORS = 16;
 const DESKTOP_GRID_SIZE = 120; // More cells = finer detail on desktop
-const MOBILE_GRID_SIZE = 30;  // Balanced: good image quality with cells big enough for kids to tap
+const MOBILE_GRID_SIZE = 35;  // Rows in portrait mode — cols are calculated from screen aspect ratio
 const DESKTOP_DISPLAY_SIZE = 1500;
 
 function getGridSize() {
@@ -224,10 +224,42 @@ function processImage(img) {
     const gridSize = getGridSize();
     let cols = gridSize;
     let rows = gridSize;
-    if (img.width > img.height) {
-        rows = Math.floor(gridSize * (img.height / img.width));
+
+    // Source rectangle for sampling (may be center-cropped on portrait mobile)
+    let srcX = 0, srcY = 0, srcW = img.width, srcH = img.height;
+
+    const isLandscapeMode = window.matchMedia('(max-height: 500px) and (orientation: landscape)').matches;
+
+    if (isMobile() && !isLandscapeMode) {
+        // ── PORTRAIT MOBILE: match the grid to the PHONE's aspect ratio ──────────
+        // This makes the canvas fill the entire screen and gives large, tappable cells.
+        // We center-crop the image so its most important part (the center) fills the grid.
+        const reservedH = 210;
+        const availH = window.innerHeight - reservedH;
+        const availW = window.innerWidth - 8;
+
+        rows = gridSize;
+        cols = Math.max(4, Math.round(gridSize * availW / availH));
+
+        // Center-crop image to the same aspect ratio as the grid
+        const gridAspect = cols / rows;
+        const imgAspect  = img.width / img.height;
+        if (imgAspect > gridAspect) {
+            // Image is wider → crop left & right, keep full height
+            srcW = Math.round(img.height * gridAspect);
+            srcX = Math.round((img.width - srcW) / 2);
+        } else {
+            // Image is taller → crop top & bottom, keep full width
+            srcH = Math.round(img.width / gridAspect);
+            srcY = Math.round((img.height - srcH) / 2);
+        }
     } else {
-        cols = Math.floor(gridSize * (img.width / img.height));
+        // Desktop or landscape mobile: preserve the image's own aspect ratio
+        if (img.width > img.height) {
+            rows = Math.floor(gridSize * (img.height / img.width));
+        } else {
+            cols = Math.floor(gridSize * (img.width / img.height));
+        }
     }
 
     // Step 1: Sample colors from a larger intermediate canvas for better k-means accuracy
@@ -236,7 +268,8 @@ function processImage(img) {
     const sampleH = rows * sampleScale;
     processingCanvas.width = sampleW;
     processingCanvas.height = sampleH;
-    ctx.drawImage(img, 0, 0, sampleW, sampleH);
+    // Draw with the (possibly cropped) source rectangle
+    ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, sampleW, sampleH);
     const sampleData = ctx.getImageData(0, 0, sampleW, sampleH).data;
 
     // Collect color samples (cap at 4000 for speed)
@@ -314,7 +347,7 @@ function processImage(img) {
     // Merge regions that are too small for a kid to comfortably tap.
     // Any region with fewer than MIN_REGION_CELLS gets absorbed into whichever
     // neighbouring region it shares the most border with.
-    eliminateSmallRegions(isMobile() ? 6 : 3);
+    eliminateSmallRegions(isMobile() ? 4 : 3);
 
     // Compact palette: remove colors that have zero cells after smoothing, and
     // renumber gridData so the palette indices are contiguous (0, 1, 2, ...).
@@ -637,13 +670,15 @@ function drawGameCanvas() {
     let cellSize;
 
     if (isMobile()) {
-        const isLandscape = window.matchMedia('(orientation: landscape)').matches;
+        const isLandscape = window.matchMedia('(max-height: 500px) and (orientation: landscape)').matches;
         const reservedH = isLandscape ? 50 : 210;
         const availH = window.innerHeight - reservedH;
         const availW = window.innerWidth - 8;
         const byHeight = Math.floor(availH / rows);
         const byWidth = Math.floor(availW / cols);
-        cellSize = Math.max(12, Math.min(byWidth, byHeight)); // 12px minimum for comfortable tapping
+        // In portrait mode the grid matches the screen aspect ratio, so cells naturally
+        // fill the whole screen at ~16-20px each. Safety floor of 8px for landscape.
+        cellSize = Math.max(8, Math.min(byWidth, byHeight));
     } else {
         cellSize = Math.max(6, Math.floor(DESKTOP_DISPLAY_SIZE / Math.max(cols, rows)));
     }
