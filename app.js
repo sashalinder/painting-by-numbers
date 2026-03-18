@@ -57,7 +57,7 @@ function setupUI() {
     document.getElementById('reset-button').addEventListener('click', resetGame);
 
     document.getElementById('download-button').addEventListener('click', () => {
-        if (!gameState.quantPixels.length) {
+        if (!gameState.paintedRegions.size) {
             alert('Paint something first! 🎨');
             return;
         }
@@ -78,6 +78,7 @@ function setupUI() {
             pix[i] = r; pix[i+1] = g; pix[i+2] = b; pix[i+3] = 255;
         };
 
+        // Pass 1: fill blocks
         for (let wy = 0; wy < workH; wy++) {
             for (let wx = 0; wx < workW; wx++) {
                 const ci  = quantPixels[wy][wx];
@@ -88,13 +89,31 @@ function setupUI() {
                     const ac = regionActualColor[rid] || palette[ci];
                     r = ac.r; g = ac.g; b = ac.b;
                 } else {
-                    r = 244; g = 247; b = 246;
+                    r = 252; g = 252; b = 252;
                 }
                 for (let sy = 0; sy < S; sy++)
                     for (let sx = 0; sx < S; sx++)
                         sp(wx*S+sx, wy*S+sy, r, g, b);
             }
         }
+
+        // Pass 2: borders (same as drawGameCanvas so saved image matches screen)
+        for (let wy = 0; wy < workH; wy++) {
+            for (let wx = 0; wx < workW; wx++) {
+                const ci = quantPixels[wy][wx];
+                if (wx + 1 < workW && quantPixels[wy][wx+1] !== ci) {
+                    const dx = wx*S + S - 1;
+                    for (let sy = 0; sy < S; sy++) sp(dx, wy*S+sy, 40, 40, 40);
+                }
+                if (wy + 1 < workH && quantPixels[wy+1][wx] !== ci) {
+                    const dy = wy*S + S - 1;
+                    for (let sx = 0; sx < S; sx++) sp(wx*S+sx, dy, 40, 40, 40);
+                }
+            }
+        }
+        for (let d = 0; d < canvasW; d++) { sp(d, 0, 40, 40, 40); sp(d, canvasH-1, 40, 40, 40); }
+        for (let d = 0; d < canvasH; d++) { sp(0, d, 40, 40, 40); sp(canvasW-1, d, 40, 40, 40); }
+
         sCtx.putImageData(imgData, 0, 0);
 
         const link      = document.createElement('a');
