@@ -1,4 +1,4 @@
-const MAX_COLORS            = 16;
+const MAX_COLORS            = 24;
 const MOBILE_DISPLAY_SCALE  = 3;   // each work-pixel renders as S×S screen pixels
 const DESKTOP_DISPLAY_SCALE = 3;
 const MOBILE_MIN_REGION     = 200; // work pixels — merge regions smaller than this
@@ -7,14 +7,15 @@ const DESKTOP_MIN_REGION    = 500;
 let gameState = {
     quantPixels:    [],   // [y][x] → palette color index (Int16Array rows)
     regionLabel:    [],   // [y][x] → region ID (Int32Array rows)
-    regionColor:    {},   // region ID → palette color index
-    regionSizes:    {},   // region ID → pixel count (post-merge)
-    regionRepCells: {},   // region ID → {x,y} in work coords for number placement
-    colorTotals:    [],   // palette index → total pixel count
-    colorsCompleted: new Set(),
-    palette:        [],
-    selectedColor:  null,
-    paintedRegions: new Set(), // IDs of regions the player has painted
+    regionColor:      {},   // region ID → palette color index
+    regionActualColor:{},   // region ID → {r,g,b} true average from original pixels
+    regionSizes:      {},   // region ID → pixel count (post-merge)
+    regionRepCells:   {},   // region ID → {x,y} in work coords for number placement
+    colorTotals:      [],   // palette index → total pixel count
+    colorsCompleted:  new Set(),
+    palette:          [],
+    selectedColor:    null,
+    paintedRegions:   new Set(), // IDs of regions the player has painted
     workW: 0,
     workH: 0,
 };
@@ -60,7 +61,7 @@ function setupUI() {
             alert('Paint something first! 🎨');
             return;
         }
-        const { quantPixels, regionLabel, workW, workH, palette, paintedRegions } = gameState;
+        const { quantPixels, regionLabel, workW, workH, palette, paintedRegions, regionActualColor } = gameState;
         const S       = isMobile() ? MOBILE_DISPLAY_SCALE : DESKTOP_DISPLAY_SCALE;
         const canvasW = workW * S;
         const canvasH = workH * S;
@@ -84,7 +85,8 @@ function setupUI() {
                 const rid = regionLabel[wy][wx];
                 let r, g, b;
                 if (paintedRegions.has(rid)) {
-                    const c = palette[ci]; r = c.r; g = c.g; b = c.b;
+                    const ac = regionActualColor[rid] || palette[ci];
+                    r = ac.r; g = ac.g; b = ac.b;
                 } else {
                     r = 244; g = 247; b = 246;
                 }
@@ -224,15 +226,22 @@ function processImage(img) {
     workW = Math.max(20, workW);
     workH = Math.max(20, workH);
 
-    // Draw with slight blur to merge similar-looking areas before quantisation
     processingCanvas.width  = workW;
     processingCanvas.height = workH;
-    ctx.filter = 'blur(2px)';
+
+    // 1. Original (unblurred) pixels — used later to compute faithful region colours
+    ctx.filter = 'none';
+    ctx.drawImage(img, 0, 0, workW, workH);
+    const origPixelData = ctx.getImageData(0, 0, workW, workH).data;
+
+    // 2. Lightly blurred pixels — used only for region-boundary quantisation
+    //    (blur reduces edge noise so boundaries are smoother, but is NOT used for colours)
+    ctx.filter = 'blur(1px)';
     ctx.drawImage(img, 0, 0, workW, workH);
     ctx.filter = 'none';
-
     const pixelData = ctx.getImageData(0, 0, workW, workH).data;
-    const totalPx   = workW * workH;
+
+    const totalPx = workW * workH;
 
     // Sample colors for palette building
     const step         = Math.max(1, Math.floor(totalPx / 8000));
@@ -329,18 +338,41 @@ function processImage(img) {
         regionRepCells[ridStr] = best;
     }
 
-    gameState.quantPixels    = quantPixels;
-    gameState.regionLabel    = regionLabel;
-    gameState.regionColor    = regionColor;
-    gameState.regionSizes    = finalSizes;
-    gameState.regionRepCells = regionRepCells;
-    gameState.colorTotals    = colorTotals;
-    gameState.palette        = compactPalette;
-    gameState.workW          = workW;
-    gameState.workH          = workH;
-    gameState.paintedRegions = new Set();
-    gameState.selectedColor  = null;
-    gameState.colorsCompleted = new Set();
+    // Compute per-region actual colour from the ORIGINAL (unblurred) pixels.
+    // When a region is painted, this colour is used — not the muted centroid from
+    // quantisation — so the fully-painted canvas looks faithful to the source photo.
+    const regionActualColor = {};
+    const colorAccum        = {};
+    for (let y = 0; y < workH; y++) {
+        for (let x = 0; x < workW; x++) {
+            const rid = regionLabel[y][x];
+            if (rid < 0) continue;
+            if (!colorAccum[rid]) colorAccum[rid] = { r: 0, g: 0, b: 0, n: 0 };
+            const p = (y * workW + x) * 4;
+            colorAccum[rid].r += origPixelData[p];
+            colorAccum[rid].g += origPixelData[p + 1];
+            colorAccum[rid].b += origPixelData[p + 2];
+            colorAccum[rid].n++;
+        }
+    }
+    for (const rid in colorAccum) {
+        const { r, g, b, n } = colorAccum[rid];
+        regionActualColor[rid] = { r: Math.round(r / n), g: Math.round(g / n), b: Math.round(b / n) };
+    }
+
+    gameState.quantPixels      = quantPixels;
+    gameState.regionLabel      = regionLabel;
+    gameState.regionColor      = regionColor;
+    gameState.regionActualColor= regionActualColor;
+    gameState.regionSizes      = finalSizes;
+    gameState.regionRepCells   = regionRepCells;
+    gameState.colorTotals      = colorTotals;
+    gameState.palette          = compactPalette;
+    gameState.workW            = workW;
+    gameState.workH            = workH;
+    gameState.paintedRegions   = new Set();
+    gameState.selectedColor    = null;
+    gameState.colorsCompleted  = new Set();
 
     drawGameCanvas();
     buildPaletteUI();
@@ -440,7 +472,7 @@ function mergeSmallPixelRegions(quantPixels, regionLabel, regionColor, regionSiz
 
 // ─── Render the paint-by-numbers canvas ─────────────────────────────────────
 function drawGameCanvas() {
-    const { quantPixels, regionLabel, workW, workH, palette, paintedRegions } = gameState;
+    const { quantPixels, regionLabel, workW, workH, palette, paintedRegions, regionActualColor } = gameState;
     if (!quantPixels.length) return;
 
     const S       = isMobile() ? MOBILE_DISPLAY_SCALE : DESKTOP_DISPLAY_SCALE;
@@ -470,7 +502,10 @@ function drawGameCanvas() {
             const rid = regionLabel[wy][wx];
             let r, g, b;
             if (paintedRegions.has(rid)) {
-                const c = palette[ci]; r = c.r; g = c.g; b = c.b;
+                // Use the actual average pixel color of this region (from original image),
+                // not the muted quantisation centroid — makes the result look like the photo
+                const ac = regionActualColor[rid] || palette[ci];
+                r = ac.r; g = ac.g; b = ac.b;
             } else {
                 r = 252; g = 252; b = 252; // unpainted = near-white
             }
@@ -742,8 +777,8 @@ function resetGame() {
     document.getElementById('color-progress').classList.add('hidden');
     hideMobileFab();
     gameState = {
-        quantPixels: [], regionLabel: [], regionColor: {}, regionSizes: {},
-        regionRepCells: {}, colorTotals: [], colorsCompleted: new Set(),
+        quantPixels: [], regionLabel: [], regionColor: {}, regionActualColor: {},
+        regionSizes: {}, regionRepCells: {}, colorTotals: [], colorsCompleted: new Set(),
         palette: [], selectedColor: null, paintedRegions: new Set(), workW: 0, workH: 0,
     };
     const canvas = document.getElementById('paint-canvas');
