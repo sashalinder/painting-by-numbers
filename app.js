@@ -248,17 +248,11 @@ function processImage(img) {
     processingCanvas.width  = workW;
     processingCanvas.height = workH;
 
-    // 1. Original (unblurred) pixels — used later to compute faithful region colours
-    ctx.filter = 'none';
+    // Draw once — no blur. ctx.drawImage already does smooth bilinear downsampling.
+    // Adding blur on top mixes adjacent colors (e.g. orange fur + blue background → brown).
     ctx.drawImage(img, 0, 0, workW, workH);
-    const origPixelData = ctx.getImageData(0, 0, workW, workH).data;
-
-    // 2. Lightly blurred pixels — used only for region-boundary quantisation
-    //    (blur reduces edge noise so boundaries are smoother, but is NOT used for colours)
-    ctx.filter = 'blur(1px)';
-    ctx.drawImage(img, 0, 0, workW, workH);
-    ctx.filter = 'none';
-    const pixelData = ctx.getImageData(0, 0, workW, workH).data;
+    const pixelData     = ctx.getImageData(0, 0, workW, workH).data;
+    const origPixelData = pixelData; // same source for both quantisation and actual colours
 
     const totalPx = workW * workH;
 
