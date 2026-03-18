@@ -1,22 +1,22 @@
-const MAX_COLORS = 16;
-const DESKTOP_GRID_SIZE = 120; // More cells = finer detail on desktop
-const MOBILE_GRID_SIZE = 35;  // Rows in portrait mode — cols are calculated from screen aspect ratio
-const DESKTOP_DISPLAY_SIZE = 1500;
-
-function getGridSize() {
-    return isMobile() ? MOBILE_GRID_SIZE : DESKTOP_GRID_SIZE;
-}
+const MAX_COLORS            = 16;
+const MOBILE_DISPLAY_SCALE  = 3;   // each work-pixel renders as S×S screen pixels
+const DESKTOP_DISPLAY_SCALE = 3;
+const MOBILE_MIN_REGION     = 200; // work pixels — merge regions smaller than this
+const DESKTOP_MIN_REGION    = 500;
 
 let gameState = {
-    gridData: [], // 2D array of color indices
-    regionData: [], // 2D array to track what contiguous ID a square belongs to
-    regionSizes: {}, // Map of region ID to total squares
-    regionRepCells: {}, // Map of region ID to one representative cell {x,y} for number display
-    colorTotals: [], // Total squares for each color
-    colorsCompleted: new Set(), // Track fully completed colors
-    palette: [], // Array of RGB colors
-    selectedColor: null,
-    paintedCells: new Set() // Now we track individual squares painted
+    quantPixels:    [],   // [y][x] → palette color index (Int16Array rows)
+    regionLabel:    [],   // [y][x] → region ID (Int32Array rows)
+    regionColor:    {},   // region ID → palette color index
+    regionSizes:    {},   // region ID → pixel count (post-merge)
+    regionRepCells: {},   // region ID → {x,y} in work coords for number placement
+    colorTotals:    [],   // palette index → total pixel count
+    colorsCompleted: new Set(),
+    palette:        [],
+    selectedColor:  null,
+    paintedRegions: new Set(), // IDs of regions the player has painted
+    workW: 0,
+    workH: 0,
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -29,7 +29,7 @@ function isMobile() {
 }
 
 function setupUI() {
-    const dropZone = document.getElementById('drop-zone');
+    const dropZone   = document.getElementById('drop-zone');
     const imageInput = document.getElementById('image-input');
 
     dropZone.addEventListener('click', () => imageInput.click());
@@ -56,77 +56,64 @@ function setupUI() {
     document.getElementById('reset-button').addEventListener('click', resetGame);
 
     document.getElementById('download-button').addEventListener('click', () => {
-        if (gameState.gridData.length === 0) {
+        if (!gameState.quantPixels.length) {
             alert('Paint something first! 🎨');
             return;
         }
-        // Render a clean save: painted cells show their color, unpainted stay white (no numbers)
-        const srcCanvas = document.getElementById('paint-canvas');
-        const saveCanvas = document.createElement('canvas');
-        saveCanvas.width = srcCanvas.width;
-        saveCanvas.height = srcCanvas.height;
-        const sCtx = saveCanvas.getContext('2d');
+        const { quantPixels, regionLabel, workW, workH, palette, paintedRegions } = gameState;
+        const S       = isMobile() ? MOBILE_DISPLAY_SCALE : DESKTOP_DISPLAY_SCALE;
+        const canvasW = workW * S;
+        const canvasH = workH * S;
 
-        // White background
-        sCtx.fillStyle = '#FFFFFF';
-        sCtx.fillRect(0, 0, saveCanvas.width, saveCanvas.height);
+        const saveCanvas    = document.createElement('canvas');
+        saveCanvas.width    = canvasW;
+        saveCanvas.height   = canvasH;
+        const sCtx    = saveCanvas.getContext('2d');
+        const imgData = sCtx.createImageData(canvasW, canvasH);
+        const pix     = imgData.data;
 
-        const rows = gameState.gridData.length;
-        const cols = gameState.gridData[0].length;
-        const cellSize = srcCanvas.width / cols;
+        const sp = (dx, dy, r, g, b) => {
+            const i = (dy * canvasW + dx) * 4;
+            pix[i] = r; pix[i+1] = g; pix[i+2] = b; pix[i+3] = 255;
+        };
 
-        // Fill every cell with its color (painted or not — reveal the full picture)
-        for (let y = 0; y < rows; y++) {
-            for (let x = 0; x < cols; x++) {
-                const colorIdx = gameState.gridData[y][x];
-                if (colorIdx === -1) continue;
-                const c = gameState.palette[colorIdx];
-                const isPainted = gameState.paintedCells.has(`${x},${y}`);
-                if (isPainted) {
-                    sCtx.fillStyle = `rgb(${c.r},${c.g},${c.b})`;
+        for (let wy = 0; wy < workH; wy++) {
+            for (let wx = 0; wx < workW; wx++) {
+                const ci  = quantPixels[wy][wx];
+                if (ci < 0) continue;
+                const rid = regionLabel[wy][wx];
+                let r, g, b;
+                if (paintedRegions.has(rid)) {
+                    const c = palette[ci]; r = c.r; g = c.g; b = c.b;
                 } else {
-                    sCtx.fillStyle = '#F4F7F6';
+                    r = 244; g = 247; b = 246;
                 }
-                sCtx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                for (let sy = 0; sy < S; sy++)
+                    for (let sx = 0; sx < S; sx++)
+                        sp(wx*S+sx, wy*S+sy, r, g, b);
             }
         }
+        sCtx.putImageData(imgData, 0, 0);
 
-        // Draw the same grid borders as the painting canvas
-        sCtx.lineWidth = 1;
-        sCtx.strokeStyle = '#D1D8DD';
-        sCtx.beginPath();
-        for (let y = 0; y <= rows; y++) {
-            sCtx.moveTo(0, y * cellSize); sCtx.lineTo(cols * cellSize, y * cellSize);
-        }
-        for (let x = 0; x <= cols; x++) {
-            sCtx.moveTo(x * cellSize, 0); sCtx.lineTo(x * cellSize, rows * cellSize);
-        }
-        sCtx.stroke();
-
-        const link = document.createElement('a');
-        link.download = 'my-masterpiece.png';
-        link.href = saveCanvas.toDataURL('image/png');
+        const link      = document.createElement('a');
+        link.download   = 'my-masterpiece.png';
+        link.href       = saveCanvas.toDataURL('image/png');
         link.click();
     });
 
     const canvas = document.getElementById('paint-canvas');
-    canvas.addEventListener('click', handleCanvasClick);
-    canvas.addEventListener('mousemove', handleCanvasMouseMove);
-    canvas.addEventListener('mouseleave', () => {
-        canvas.style.cursor = 'crosshair';
-    });
-
-    // Touch support for mobile painting
+    canvas.addEventListener('click',      handleCanvasClick);
+    canvas.addEventListener('mousemove',  handleCanvasMouseMove);
+    canvas.addEventListener('mouseleave', () => { canvas.style.cursor = 'crosshair'; });
     canvas.addEventListener('touchstart', handleCanvasTouch, { passive: false });
 
-    // Mobile floating palette setup
     setupMobilePalette();
 }
 
 function setupMobilePalette() {
-    const fab = document.getElementById('mobile-palette-fab');
-    const popup = document.getElementById('mobile-palette-popup');
-    const overlay = document.getElementById('mobile-palette-overlay');
+    const fab      = document.getElementById('mobile-palette-fab');
+    const popup    = document.getElementById('mobile-palette-popup');
+    const overlay  = document.getElementById('mobile-palette-overlay');
     const closeBtn = document.getElementById('mobile-palette-close');
 
     fab.addEventListener('click', () => {
@@ -137,14 +124,11 @@ function setupMobilePalette() {
     });
 
     function closePalette() {
-        popup.classList.add('hidden');
-        popup.classList.remove('visible');
-        overlay.classList.add('hidden');
-        overlay.classList.remove('visible');
+        popup.classList.add('hidden');   popup.classList.remove('visible');
+        overlay.classList.add('hidden'); overlay.classList.remove('visible');
     }
-
     closeBtn.addEventListener('click', closePalette);
-    overlay.addEventListener('click', closePalette);
+    overlay.addEventListener('click',  closePalette);
 }
 
 function showMobileFab() {
@@ -157,7 +141,6 @@ function hideMobileFab() {
     const fab = document.getElementById('mobile-palette-fab');
     fab.classList.add('hidden');
     fab.classList.remove('visible');
-    // Also close popup
     document.getElementById('mobile-palette-popup').classList.add('hidden');
     document.getElementById('mobile-palette-popup').classList.remove('visible');
     document.getElementById('mobile-palette-overlay').classList.add('hidden');
@@ -165,12 +148,11 @@ function hideMobileFab() {
 }
 
 function updateMobileFabColor() {
-    const fab = document.getElementById('mobile-palette-fab');
+    const fab     = document.getElementById('mobile-palette-fab');
     const preview = fab.querySelector('.fab-swatch-preview');
-
     if (gameState.selectedColor !== null) {
         const c = gameState.palette[gameState.selectedColor];
-        preview.style.backgroundColor = `rgb(${c.r}, ${c.g}, ${c.b})`;
+        preview.style.backgroundColor = `rgb(${c.r},${c.g},${c.b})`;
         fab.classList.add('has-color');
     } else {
         fab.classList.remove('has-color');
@@ -179,12 +161,8 @@ function updateMobileFabColor() {
 
 function handleCanvasTouch(e) {
     e.preventDefault();
-    const touch = e.touches[0];
-    // Create a synthetic click event from the touch
-    const clickEvent = new MouseEvent('click', {
-        clientX: touch.clientX,
-        clientY: touch.clientY
-    });
+    const touch      = e.touches[0];
+    const clickEvent = new MouseEvent('click', { clientX: touch.clientX, clientY: touch.clientY });
     e.target.dispatchEvent(clickEvent);
 }
 
@@ -193,729 +171,406 @@ function handleImage(file) {
         alert("Please pick a picture file!");
         return;
     }
-
     document.getElementById('upload-section').classList.add('hidden');
     document.getElementById('workspace-section').classList.remove('hidden');
-
-    if (isMobile()) {
-        showMobileFab();
-    }
+    if (isMobile()) showMobileFab();
 
     const reader = new FileReader();
     reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-            setTimeout(() => processImage(img), 50); 
-        };
-        img.src = e.target.result;
-        
-        // Populate the floating reference image so kids can see what they are painting!
-        const refImage = document.getElementById('reference-image');
-        refImage.src = e.target.result;
-        refImage.classList.remove('hidden');
+        const img    = new Image();
+        img.onload   = () => { setTimeout(() => processImage(img), 50); };
+        img.src      = e.target.result;
+        const refImg = document.getElementById('reference-image');
+        refImg.src   = e.target.result;
+        refImg.classList.remove('hidden');
     };
     reader.readAsDataURL(file);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// processImage — pixel-level segmentation
+// ─────────────────────────────────────────────────────────────────────────────
 function processImage(img) {
     const processingCanvas = document.getElementById('processing-canvas');
-    const ctx = processingCanvas.getContext('2d');
+    const ctx = processingCanvas.getContext('2d', { willReadFrequently: true });
 
-    const gridSize = getGridSize();
-    let cols = gridSize;
-    let rows = gridSize;
+    const mobile      = isMobile();
+    const isLandscape = window.matchMedia('(max-height: 500px) and (orientation: landscape)').matches;
+    const S           = mobile ? MOBILE_DISPLAY_SCALE : DESKTOP_DISPLAY_SCALE;
+    const minRegion   = mobile ? MOBILE_MIN_REGION    : DESKTOP_MIN_REGION;
 
-    // Source rectangle for sampling (may be center-cropped on portrait mobile)
-    let srcX = 0, srcY = 0, srcW = img.width, srcH = img.height;
-
-    const isLandscapeMode = window.matchMedia('(max-height: 500px) and (orientation: landscape)').matches;
-
-    if (isMobile() && !isLandscapeMode) {
-        // ── PORTRAIT MOBILE: match the grid to the PHONE's aspect ratio ──────────
-        // This makes the canvas fill the entire screen and gives large, tappable cells.
-        // We center-crop the image so its most important part (the center) fills the grid.
-        const reservedH = 210;
-        const availH = window.innerHeight - reservedH;
-        const availW = window.innerWidth - 8;
-
-        rows = gridSize;
-        cols = Math.max(4, Math.round(gridSize * availW / availH));
-
-        // Center-crop image to the same aspect ratio as the grid
-        const gridAspect = cols / rows;
-        const imgAspect  = img.width / img.height;
-        if (imgAspect > gridAspect) {
-            // Image is wider → crop left & right, keep full height
-            srcW = Math.round(img.height * gridAspect);
-            srcX = Math.round((img.width - srcW) / 2);
-        } else {
-            // Image is taller → crop top & bottom, keep full width
-            srcH = Math.round(img.width / gridAspect);
-            srcY = Math.round((img.height - srcH) / 2);
-        }
+    // Available screen area for the canvas
+    let availW, availH;
+    if (mobile && !isLandscape) {
+        availH = window.innerHeight - 210;
+        availW = window.innerWidth  - 8;
+    } else if (mobile && isLandscape) {
+        availH = window.innerHeight - 50;
+        availW = window.innerWidth  - 8;
     } else {
-        // Desktop or landscape mobile: preserve the image's own aspect ratio
-        if (img.width > img.height) {
-            rows = Math.floor(gridSize * (img.height / img.width));
-        } else {
-            cols = Math.floor(gridSize * (img.width / img.height));
-        }
+        availW = Math.min(window.innerWidth  - 60, 1400);
+        availH = Math.min(window.innerHeight - 150, 900);
     }
 
-    // Step 1: Sample colors from a larger intermediate canvas for better k-means accuracy
-    const sampleScale = 8; // 8x the grid resolution = much richer color data
-    const sampleW = cols * sampleScale;
-    const sampleH = rows * sampleScale;
-    processingCanvas.width = sampleW;
-    processingCanvas.height = sampleH;
-    // Draw with the (possibly cropped) source rectangle
-    ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, sampleW, sampleH);
-    const sampleData = ctx.getImageData(0, 0, sampleW, sampleH).data;
+    // Work canvas: fits in available area, preserves image aspect ratio — NO CROPPING
+    const imgAspect = img.width / img.height;
+    let workW = Math.min(Math.floor(availW / S), mobile ? 160 : 400);
+    let workH = Math.round(workW / imgAspect);
+    // Clamp height too
+    if (workH * S > availH) {
+        workH = Math.floor(availH / S);
+        workW = Math.round(workH * imgAspect);
+    }
+    workW = Math.max(20, workW);
+    workH = Math.max(20, workH);
 
-    // Collect color samples (cap at 8000 for better accuracy)
-    let sampleColors = [];
-    const totalPx = (sampleW * sampleH);
-    const step = Math.max(1, Math.floor(totalPx / 8000));
+    // Draw with slight blur to merge similar-looking areas before quantisation
+    processingCanvas.width  = workW;
+    processingCanvas.height = workH;
+    ctx.filter = 'blur(2px)';
+    ctx.drawImage(img, 0, 0, workW, workH);
+    ctx.filter = 'none';
+
+    const pixelData = ctx.getImageData(0, 0, workW, workH).data;
+    const totalPx   = workW * workH;
+
+    // Sample colors for palette building
+    const step         = Math.max(1, Math.floor(totalPx / 8000));
+    const sampleColors = [];
     for (let i = 0; i < totalPx; i += step) {
         const p = i * 4;
-        if (sampleData[p + 3] > 128) {
-            sampleColors.push({ r: sampleData[p], g: sampleData[p + 1], b: sampleData[p + 2] });
-        }
+        if (pixelData[p + 3] > 128)
+            sampleColors.push({ r: pixelData[p], g: pixelData[p+1], b: pixelData[p+2] });
     }
-    if (sampleColors.length === 0) sampleColors.push({ r: 0, g: 0, b: 0 });
+    if (sampleColors.length === 0) sampleColors.push({ r: 128, g: 128, b: 128 });
 
-    // Use Median Cut for a deterministic, well-distributed initial palette, then
-    // refine the centroids with k-means so they sit at actual cluster centres.
-    // This is reliably better than random k-means++ initialisation alone.
+    // Build palette: median cut gives deterministic coverage, k-means snaps centroids
     const mcPalette = medianCut(sampleColors, MAX_COLORS);
-    gameState.palette = kMeans(sampleColors, MAX_COLORS, mcPalette);
+    const palette   = kMeans(sampleColors, MAX_COLORS, mcPalette);
 
-    // Step 2: Assign each grid cell by finding the MOST COMMON palette color in its entire
-    // block (mode) — far more robust than a single center pixel, captures the true dominant
-    // color of each region and correctly handles noisy/edge pixels.
-    // Cache nearest-palette lookups to avoid redundant computation for repeated colors.
-    const nearestColorCache = new Map();
+    // Per-pixel nearest-palette assignment with cache
+    const nearestCache = new Map();
     const cachedNearest = (r, g, b) => {
         const key = (r << 16) | (g << 8) | b;
-        let idx = nearestColorCache.get(key);
+        let idx   = nearestCache.get(key);
         if (idx === undefined) {
-            idx = findNearestColorIndex(r, g, b, gameState.palette);
-            nearestColorCache.set(key, idx);
+            idx = findNearestColorIndex(r, g, b, palette);
+            nearestCache.set(key, idx);
         }
         return idx;
     };
 
-    const blockW = Math.max(1, Math.floor(sampleW / cols));
-    const blockH = Math.max(1, Math.floor(sampleH / rows));
-
-    gameState.gridData = [];
-    for (let y = 0; y < rows; y++) {
-        let row = [];
-        for (let x = 0; x < cols; x++) {
-            const startX = x * blockW;
-            const startY = y * blockH;
-            const endX = Math.min(startX + blockW, sampleW);
-            const endY = Math.min(startY + blockH, sampleH);
-
-            // Count which palette color appears most often in this block
-            const colorCounts = new Array(gameState.palette.length).fill(0);
-            let validPixels = 0;
-
-            for (let py = startY; py < endY; py++) {
-                for (let px = startX; px < endX; px++) {
-                    const p = (py * sampleW + px) * 4;
-                    if (sampleData[p + 3] >= 128) {
-                        colorCounts[cachedNearest(sampleData[p], sampleData[p + 1], sampleData[p + 2])]++;
-                        validPixels++;
-                    }
-                }
-            }
-
-            if (validPixels === 0) {
-                row.push(-1);
-            } else {
-                let bestColor = 0, bestCount = -1;
-                for (let i = 0; i < colorCounts.length; i++) {
-                    if (colorCounts[i] > bestCount) { bestCount = colorCounts[i]; bestColor = i; }
-                }
-                row.push(bestColor);
-            }
+    const quantPixels = [];
+    for (let y = 0; y < workH; y++) {
+        const row = new Int16Array(workW);
+        for (let x = 0; x < workW; x++) {
+            const p = (y * workW + x) * 4;
+            row[x]  = pixelData[p + 3] >= 128
+                ? cachedNearest(pixelData[p], pixelData[p+1], pixelData[p+2])
+                : -1;
         }
-        gameState.gridData.push(row);
+        quantPixels.push(row);
     }
 
-    // Smooth out isolated noise cells — removes single-pixel speckles that break
-    // up the silhouette and replaces them with the dominant surrounding color.
-    smoothGridData();
+    // Label connected regions via BFS (4-connectivity)
+    const { regionLabel, regionColor, regionSizes, regionCells } =
+        labelRegions(quantPixels, workW, workH);
 
-    // Merge regions that are too small for a kid to comfortably tap.
-    // Any region with fewer than MIN_REGION_CELLS gets absorbed into whichever
-    // neighbouring region it shares the most border with.
-    eliminateSmallRegions(isMobile() ? 4 : 3);
+    // Merge regions that are too small to tap comfortably
+    mergeSmallPixelRegions(quantPixels, regionLabel, regionColor, regionSizes, regionCells, workW, workH, minRegion);
 
-    // Compact palette: remove colors that have zero cells after smoothing, and
-    // renumber gridData so the palette indices are contiguous (0, 1, 2, ...).
-    // This ensures the palette only shows colors that actually appear on the canvas.
-    {
-        const usedIndices = new Set();
-        for (const row of gameState.gridData) {
-            for (const c of row) { if (c !== -1) usedIndices.add(c); }
+    // Compact palette — drop colours with zero pixels after merging
+    const usedSet = new Set();
+    for (let y = 0; y < workH; y++)
+        for (let x = 0; x < workW; x++)
+            if (quantPixels[y][x] >= 0) usedSet.add(quantPixels[y][x]);
+
+    const oldToNew      = {};
+    const compactPalette = [];
+    palette.forEach((color, i) => {
+        if (usedSet.has(i)) { oldToNew[i] = compactPalette.length; compactPalette.push(color); }
+    });
+    for (let y = 0; y < workH; y++)
+        for (let x = 0; x < workW; x++)
+            if (quantPixels[y][x] >= 0) quantPixels[y][x] = oldToNew[quantPixels[y][x]];
+    for (const rid in regionColor)
+        if (regionColor[rid] >= 0 && oldToNew[regionColor[rid]] !== undefined)
+            regionColor[rid] = oldToNew[regionColor[rid]];
+
+    // Compute colorTotals and per-region centroids from final pixel data
+    const colorTotals   = new Array(compactPalette.length).fill(0);
+    const regionRepCells = {};
+    const finalSizes    = {};
+    const repAccum      = {}; // rid → {sumX, sumY, count}
+
+    for (let y = 0; y < workH; y++) {
+        for (let x = 0; x < workW; x++) {
+            const ci  = quantPixels[y][x];
+            const rid = regionLabel[y][x];
+            if (ci < 0 || rid < 0) continue;
+            colorTotals[ci]++;
+            finalSizes[rid] = (finalSizes[rid] || 0) + 1;
+            if (!repAccum[rid]) repAccum[rid] = { sumX: 0, sumY: 0, count: 0, cells: [] };
+            repAccum[rid].sumX += x;
+            repAccum[rid].sumY += y;
+            repAccum[rid].count++;
+            repAccum[rid].cells.push({ x, y });
         }
-        const oldToNew = {};
-        const compactedPalette = [];
-        gameState.palette.forEach((color, i) => {
-            if (usedIndices.has(i)) {
-                oldToNew[i] = compactedPalette.length;
-                compactedPalette.push(color);
-            }
-        });
-        for (let y = 0; y < gameState.gridData.length; y++) {
-            for (let x = 0; x < gameState.gridData[y].length; x++) {
-                const c = gameState.gridData[y][x];
-                if (c !== -1) gameState.gridData[y][x] = oldToNew[c];
-            }
-        }
-        gameState.palette = compactedPalette;
     }
 
-    // Calculate regions for cursor dynamic sizing
-    calculateRegions();
+    for (const ridStr in repAccum) {
+        const { sumX, sumY, count, cells } = repAccum[ridStr];
+        const avgX = sumX / count, avgY = sumY / count;
+        let best = cells[0], bestDist = Infinity;
+        for (const c of cells) {
+            const d = (c.x - avgX) ** 2 + (c.y - avgY) ** 2;
+            if (d < bestDist) { bestDist = d; best = c; }
+        }
+        regionRepCells[ridStr] = best;
+    }
+
+    gameState.quantPixels    = quantPixels;
+    gameState.regionLabel    = regionLabel;
+    gameState.regionColor    = regionColor;
+    gameState.regionSizes    = finalSizes;
+    gameState.regionRepCells = regionRepCells;
+    gameState.colorTotals    = colorTotals;
+    gameState.palette        = compactPalette;
+    gameState.workW          = workW;
+    gameState.workH          = workH;
+    gameState.paintedRegions = new Set();
+    gameState.selectedColor  = null;
+    gameState.colorsCompleted = new Set();
 
     drawGameCanvas();
     buildPaletteUI();
 }
 
-// Remove isolated noise cells by replacing them with their most common neighbor color.
-// Run 2 passes: first pass removes isolated single cells, second pass cleans up any
-// new gaps created by the first pass — giving clean silhouette-like region boundaries.
-function smoothGridData() {
-    const rows = gameState.gridData.length;
-    const cols = gameState.gridData[0].length;
+// ─── BFS region labelling ────────────────────────────────────────────────────
+function labelRegions(quantPixels, workW, workH) {
+    const regionLabel = Array.from({ length: workH }, () => new Int32Array(workW).fill(-1));
+    const regionColor = {};
+    const regionSizes = {};
+    const regionCells = {};
+    let nextId        = 0;
 
-    for (let pass = 0; pass < 2; pass++) {
-        const newGrid = gameState.gridData.map(row => [...row]);
+    for (let sy = 0; sy < workH; sy++) {
+        for (let sx = 0; sx < workW; sx++) {
+            if (regionLabel[sy][sx] !== -1) continue;
+            const color = quantPixels[sy][sx];
+            if (color < 0) continue;
 
-        for (let y = 0; y < rows; y++) {
-            for (let x = 0; x < cols; x++) {
-                const curr = gameState.gridData[y][x];
-                if (curr === -1) continue;
+            const rid   = nextId++;
+            const cells = [];
+            const queue = [{ x: sx, y: sy }];
+            regionLabel[sy][sx] = rid;
+            let head = 0;
 
-                // Count colors among 4 direct neighbors
-                const neighborCounts = {};
-                let sameCount = 0;
-                let totalNeighbors = 0;
-
-                const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-                for (const [dx, dy] of dirs) {
-                    const nx = x + dx, ny = y + dy;
-                    if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
-                        const nc = gameState.gridData[ny][nx];
-                        if (nc !== -1) {
-                            neighborCounts[nc] = (neighborCounts[nc] || 0) + 1;
-                            totalNeighbors++;
-                            if (nc === curr) sameCount++;
-                        }
-                    }
-                }
-
-                // Replace cell if it has 0 or 1 same-color direct neighbors (it's isolated/noise)
-                if (sameCount <= 1 && totalNeighbors >= 3) {
-                    let bestColor = curr, bestCount = sameCount;
-                    for (const colorStr in neighborCounts) {
-                        const c = parseInt(colorStr);
-                        if (c !== curr && neighborCounts[colorStr] > bestCount) {
-                            bestCount = neighborCounts[colorStr];
-                            bestColor = c;
-                        }
-                    }
-                    newGrid[y][x] = bestColor;
-                }
-            }
-        }
-
-        gameState.gridData = newGrid;
-    }
-}
-
-// Merge every region smaller than minCells into its most-touching neighbour.
-// Runs up to 8 passes so that merging small regions doesn't create new small ones.
-function eliminateSmallRegions(minCells) {
-    const rows = gameState.gridData.length;
-    const cols = gameState.gridData[0].length;
-
-    for (let pass = 0; pass < 8; pass++) {
-        // BFS-label every connected region
-        const label = Array.from({length: rows}, () => new Array(cols).fill(-1));
-        const regionColor = [];
-        const regionCells = [];
-        let nextLabel = 0;
-        const visited = Array.from({length: rows}, () => new Array(cols).fill(false));
-
-        for (let y = 0; y < rows; y++) {
-            for (let x = 0; x < cols; x++) {
-                if (!visited[y][x] && gameState.gridData[y][x] !== -1) {
-                    const color = gameState.gridData[y][x];
-                    const cells = [];
-                    const queue = [{x, y}];
-                    visited[y][x] = true;
-                    let head = 0;
-                    while (head < queue.length) {
-                        const c = queue[head++];
-                        label[c.y][c.x] = nextLabel;
-                        cells.push(c);
-                        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
-                            const nx = c.x + dx, ny = c.y + dy;
-                            if (nx >= 0 && nx < cols && ny >= 0 && ny < rows
-                                && !visited[ny][nx] && gameState.gridData[ny][nx] === color) {
-                                visited[ny][nx] = true;
-                                queue.push({x: nx, y: ny});
-                            }
-                        }
-                    }
-                    regionColor[nextLabel] = color;
-                    regionCells[nextLabel] = cells;
-                    nextLabel++;
-                }
-            }
-        }
-
-        let changed = false;
-        for (let rId = 0; rId < nextLabel; rId++) {
-            if (regionCells[rId].length >= minCells) continue;
-
-            // Count shared-border length with each adjacent colour
-            const borderCount = {};
-            for (const {x, y} of regionCells[rId]) {
+            while (head < queue.length) {
+                const { x, y } = queue[head++];
+                cells.push({ x, y });
                 for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
                     const nx = x + dx, ny = y + dy;
-                    if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
-                        const nl = label[ny][nx];
-                        if (nl !== -1 && nl !== rId) {
-                            const nc = regionColor[nl];
-                            borderCount[nc] = (borderCount[nc] || 0) + 1;
-                        }
+                    if (nx >= 0 && nx < workW && ny >= 0 && ny < workH
+                        && regionLabel[ny][nx] === -1
+                        && quantPixels[ny][nx] === color) {
+                        regionLabel[ny][nx] = rid;
+                        queue.push({ x: nx, y: ny });
+                    }
+                }
+            }
+            regionColor[rid] = color;
+            regionSizes[rid] = cells.length;
+            regionCells[rid] = cells;
+        }
+    }
+    return { regionLabel, regionColor, regionSizes, regionCells };
+}
+
+// ─── Merge pixel-level regions that are too small to tap ────────────────────
+function mergeSmallPixelRegions(quantPixels, regionLabel, regionColor, regionSizes, regionCells, workW, workH, minSize) {
+    for (let pass = 0; pass < 30; pass++) {
+        const smallIds = Object.keys(regionSizes)
+            .map(Number)
+            .filter(rid => regionSizes[rid] > 0 && regionSizes[rid] < minSize);
+
+        if (smallIds.length === 0) break;
+        let changed = false;
+
+        for (const rid of smallIds) {
+            const cells = regionCells[rid];
+            if (!cells || regionSizes[rid] === 0 || regionSizes[rid] >= minSize) continue;
+
+            // Count border pixels shared with each neighbouring region
+            const borderCount = {};
+            for (const { x, y } of cells) {
+                for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+                    const nx = x + dx, ny = y + dy;
+                    if (nx >= 0 && nx < workW && ny >= 0 && ny < workH) {
+                        const nid = regionLabel[ny][nx];
+                        if (nid >= 0 && nid !== rid && regionSizes[nid] > 0)
+                            borderCount[nid] = (borderCount[nid] || 0) + 1;
                     }
                 }
             }
 
-            // Absorb into the most-touching neighbour
-            let bestColor = regionColor[rId], bestCount = 0;
-            for (const [c, cnt] of Object.entries(borderCount)) {
-                if (cnt > bestCount) { bestCount = cnt; bestColor = parseInt(c); }
+            let bestNid = -1, bestCount = 0;
+            for (const [nidStr, cnt] of Object.entries(borderCount)) {
+                const nid = Number(nidStr);
+                if (cnt > bestCount) { bestCount = cnt; bestNid = nid; }
             }
-            if (bestColor !== regionColor[rId]) {
-                for (const {x, y} of regionCells[rId]) {
-                    gameState.gridData[y][x] = bestColor;
-                }
-                changed = true;
+            if (bestNid < 0) continue;
+
+            // Absorb this region into bestNid
+            const bestColor = regionColor[bestNid];
+            for (const { x, y } of cells) {
+                quantPixels[y][x] = bestColor;
+                regionLabel[y][x] = bestNid;
             }
+            if (!regionCells[bestNid]) regionCells[bestNid] = [];
+            for (const c of cells) regionCells[bestNid].push(c);
+            regionSizes[bestNid] += cells.length;
+            regionSizes[rid]      = 0;
+            regionCells[rid]      = [];
+            changed               = true;
         }
         if (!changed) break;
     }
 }
 
-function calculateRegions() {
-    const rows = gameState.gridData.length;
-    const cols = gameState.gridData[0].length;
-    
-    gameState.regionData = Array.from({length: rows}, () => Array(cols).fill(-1));
-    gameState.regionSizes = {};
-    gameState.regionRepCells = {};
-    gameState.colorTotals = new Array(MAX_COLORS).fill(0);
-    
-    let visited = Array.from({length: rows}, () => Array(cols).fill(false));
-    let regionId = 0;
-    
-    for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-            if (gameState.gridData[y][x] !== -1) {
-                gameState.colorTotals[gameState.gridData[y][x]]++;
-            }
-            if (!visited[y][x] && gameState.gridData[y][x] !== -1) {
-                let colorIdx = gameState.gridData[y][x];
-                let size = 0;
-                
-                let queue = [{x, y}];
-                visited[y][x] = true;
-                
-                let head = 0;
-                while (head < queue.length) {
-                    let curr = queue[head++];
-                    gameState.regionData[curr.y][curr.x] = regionId;
-                    size++;
-                    
-                    let neighbors = [
-                        {x: curr.x + 1, y: curr.y},
-                        {x: curr.x - 1, y: curr.y},
-                        {x: curr.x, y: curr.y + 1},
-                        {x: curr.x, y: curr.y - 1}
-                    ];
-                    
-                    for (let n of neighbors) {
-                        if (n.x >= 0 && n.x < cols && n.y >= 0 && n.y < rows) {
-                            if (!visited[n.y][n.x] && gameState.gridData[n.y][n.x] === colorIdx) {
-                                visited[n.y][n.x] = true;
-                                queue.push(n);
-                            }
-                        }
-                    }
-                }
-                gameState.regionSizes[regionId] = size;
-
-                // Find the cell closest to the center of this region — this is where we draw the number
-                let sumX = 0, sumY = 0;
-                for (const c of queue) { sumX += c.x; sumY += c.y; }
-                const avgX = sumX / queue.length, avgY = sumY / queue.length;
-                let bestCell = queue[0], bestDist = Infinity;
-                for (const c of queue) {
-                    const d = (c.x - avgX) ** 2 + (c.y - avgY) ** 2;
-                    if (d < bestDist) { bestDist = d; bestCell = c; }
-                }
-                gameState.regionRepCells[regionId] = bestCell;
-
-                regionId++;
-            }
-        }
-    }
-}
-
-// ─── Median Cut quantization ────────────────────────────────────────────────
-// Deterministically partitions colour space by repeatedly splitting the
-// largest-volume box along its widest perceptual channel.  Produces a
-// well-distributed palette that covers the full range of colours in the image.
-function medianCut(colors, k) {
-    if (colors.length === 0) return [];
-    k = Math.min(k, colors.length);
-
-    let boxes = [colors.slice()];
-
-    while (boxes.length < k) {
-        // Pick the box with the largest colour-space volume to split
-        let bigIdx = 0, bigVol = -1;
-        for (let i = 0; i < boxes.length; i++) {
-            if (boxes[i].length < 2) continue;
-            const v = _boxVolume(boxes[i]);
-            if (v > bigVol) { bigVol = v; bigIdx = i; }
-        }
-        if (bigVol <= 0) break; // All remaining boxes are single colours
-
-        const box = boxes[bigIdx];
-
-        // Find widest channel — weight by perceptual sensitivity (matches colorDistSq)
-        let minR = 255, maxR = 0, minG = 255, maxG = 0, minB = 255, maxB = 0;
-        for (const c of box) {
-            if (c.r < minR) minR = c.r; if (c.r > maxR) maxR = c.r;
-            if (c.g < minG) minG = c.g; if (c.g > maxG) maxG = c.g;
-            if (c.b < minB) minB = c.b; if (c.b > maxB) maxB = c.b;
-        }
-        const wR = (maxR - minR) * 1.414; // √2
-        const wG = (maxG - minG) * 2.000; // √4
-        const wB = (maxB - minB) * 1.732; // √3
-        let ch = 'r';
-        if (wG >= wR && wG >= wB) ch = 'g';
-        else if (wB >= wR) ch = 'b';
-
-        box.sort((a, b) => a[ch] - b[ch]);
-        const mid = Math.floor(box.length / 2);
-        boxes.splice(bigIdx, 1, box.slice(0, mid), box.slice(mid));
-    }
-
-    // Representative colour = average of each box
-    return boxes.map(box => {
-        let sumR = 0, sumG = 0, sumB = 0;
-        for (const c of box) { sumR += c.r; sumG += c.g; sumB += c.b; }
-        return {
-            r: Math.round(sumR / box.length),
-            g: Math.round(sumG / box.length),
-            b: Math.round(sumB / box.length)
-        };
-    });
-}
-
-function _boxVolume(box) {
-    let minR = 255, maxR = 0, minG = 255, maxG = 0, minB = 255, maxB = 0;
-    for (const c of box) {
-        if (c.r < minR) minR = c.r; if (c.r > maxR) maxR = c.r;
-        if (c.g < minG) minG = c.g; if (c.g > maxG) maxG = c.g;
-        if (c.b < minB) minB = c.b; if (c.b > maxB) maxB = c.b;
-    }
-    return (maxR - minR + 1) * (maxG - minG + 1) * (maxB - minB + 1);
-}
-
-// ─── k-means++ initialisation (used as fallback) ────────────────────────────
-function kMeansInit(colors, k) {
-    const centroids = [{ ...colors[Math.floor(Math.random() * colors.length)] }];
-    while (centroids.length < k) {
-        let distances = colors.map(c => {
-            let minD = Infinity;
-            for (const cent of centroids) {
-                const d = colorDistSq(c.r, c.g, c.b, cent.r, cent.g, cent.b);
-                if (d < minD) minD = d;
-            }
-            return minD;
-        });
-        const total = distances.reduce((a, b) => a + b, 0);
-        let r = Math.random() * total;
-        let cumulative = 0;
-        let chosen = colors.length - 1;
-        for (let j = 0; j < distances.length; j++) {
-            cumulative += distances[j];
-            if (r <= cumulative) { chosen = j; break; }
-        }
-        centroids.push({ ...colors[chosen] });
-    }
-    return centroids;
-}
-
-// ─── k-means refinement ─────────────────────────────────────────────────────
-// When initialCentroids are supplied (from medianCut) we skip random init and
-// run fewer iterations — the starting positions are already good.
-function kMeans(colors, k, initialCentroids) {
-    if (colors.length === 0) return [];
-    let centroids = initialCentroids
-        ? initialCentroids.map(c => ({ ...c }))
-        : kMeansInit(colors, k);
-
-    const iterations = initialCentroids ? 15 : 20;
-
-    for (let iter = 0; iter < iterations; iter++) {
-        const sumR = new Float64Array(k);
-        const sumG = new Float64Array(k);
-        const sumB = new Float64Array(k);
-        const cnt  = new Int32Array(k);
-
-        for (const c of colors) {
-            let bestDist = Infinity, bestIdx = 0;
-            for (let i = 0; i < k; i++) {
-                const dSq = colorDistSq(c.r, c.g, c.b, centroids[i].r, centroids[i].g, centroids[i].b);
-                if (dSq < bestDist) { bestDist = dSq; bestIdx = i; }
-            }
-            sumR[bestIdx] += c.r;
-            sumG[bestIdx] += c.g;
-            sumB[bestIdx] += c.b;
-            cnt[bestIdx]++;
-        }
-
-        for (let i = 0; i < k; i++) {
-            if (cnt[i] > 0) {
-                centroids[i] = {
-                    r: Math.round(sumR[i] / cnt[i]),
-                    g: Math.round(sumG[i] / cnt[i]),
-                    b: Math.round(sumB[i] / cnt[i])
-                };
-            }
-        }
-    }
-    return centroids;
-}
-
-// Perceptual color distance — weighted by human eye sensitivity (green > red > blue)
-function colorDistSq(r1, g1, b1, r2, g2, b2) {
-    const dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
-    return 2 * dr * dr + 4 * dg * dg + 3 * db * db;
-}
-
-function findNearestColorIndex(r, g, b, palette) {
-    let bestDist = Infinity;
-    let bestIdx = 0;
-    for (let i = 0; i < palette.length; i++) {
-        let p = palette[i];
-        let dSq = colorDistSq(r, g, b, p.r, p.g, p.b);
-        if (dSq < bestDist) { bestDist = dSq; bestIdx = i; }
-    }
-    return bestIdx;
-}
-
+// ─── Render the paint-by-numbers canvas ─────────────────────────────────────
 function drawGameCanvas() {
-    const rows = gameState.gridData.length;
-    if(rows === 0) return;
-    const cols = gameState.gridData[0].length;
-    
-    const canvas = document.getElementById('paint-canvas');
-    let cellSize;
+    const { quantPixels, regionLabel, workW, workH, palette, paintedRegions } = gameState;
+    if (!quantPixels.length) return;
 
-    if (isMobile()) {
-        const isLandscape = window.matchMedia('(max-height: 500px) and (orientation: landscape)').matches;
-        const reservedH = isLandscape ? 50 : 210;
-        const availH = window.innerHeight - reservedH;
-        const availW = window.innerWidth - 8;
-        const byHeight = Math.floor(availH / rows);
-        const byWidth = Math.floor(availW / cols);
-        // In portrait mode the grid matches the screen aspect ratio, so cells naturally
-        // fill the whole screen at ~16-20px each. Safety floor of 8px for landscape.
-        cellSize = Math.max(8, Math.min(byWidth, byHeight));
-    } else {
-        cellSize = Math.max(6, Math.floor(DESKTOP_DISPLAY_SIZE / Math.max(cols, rows)));
-    }
+    const S       = isMobile() ? MOBILE_DISPLAY_SCALE : DESKTOP_DISPLAY_SCALE;
+    const canvasW = workW * S;
+    const canvasH = workH * S;
 
-    canvas.width = cols * cellSize;
-    canvas.height = rows * cellSize;
-    
-    const ctx = canvas.getContext('2d');
-    
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // Draw Backgrounds and Fills first!
-    for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-            let colorIdx = gameState.gridData[y][x];
-            if (colorIdx === -1) continue;
-            
-            let cellId = `${x},${y}`;
-            let isPainted = gameState.paintedCells.has(cellId);
-            let isSelected = gameState.selectedColor === colorIdx;
-            
-            if (isPainted) {
-                let c = gameState.palette[colorIdx];
-                ctx.fillStyle = `rgb(${c.r}, ${c.g}, ${c.b})`;
-            } else if (isSelected) {
-                ctx.fillStyle = '#FFF524'; // Glowing yellow highlight!
+    const canvas  = document.getElementById('paint-canvas');
+    canvas.width  = canvasW;
+    canvas.height = canvasH;
+
+    const ctx     = canvas.getContext('2d');
+    const imgData = ctx.createImageData(canvasW, canvasH);
+    const pix     = imgData.data; // Uint8ClampedArray
+
+    // Inline helper — set one display pixel
+    const sp = (dx, dy, r, g, b) => {
+        const i = (dy * canvasW + dx) * 4;
+        pix[i] = r; pix[i+1] = g; pix[i+2] = b; pix[i+3] = 255;
+    };
+
+    // Pass 1 — fill each work pixel's S×S block with its display colour
+    for (let wy = 0; wy < workH; wy++) {
+        for (let wx = 0; wx < workW; wx++) {
+            const ci = quantPixels[wy][wx];
+            if (ci < 0) continue; // transparent → leave as black default
+
+            const rid = regionLabel[wy][wx];
+            let r, g, b;
+            if (paintedRegions.has(rid)) {
+                const c = palette[ci]; r = c.r; g = c.g; b = c.b;
             } else {
-                ctx.fillStyle = '#F4F7F6'; // Blank canvas color
+                r = 252; g = 252; b = 252; // unpainted = near-white
             }
-            
-            ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+            for (let sy = 0; sy < S; sy++)
+                for (let sx = 0; sx < S; sx++)
+                    sp(wx*S+sx, wy*S+sy, r, g, b);
         }
-    }
-    
-    // Only draw the fine cell grid when cells are large enough to see it (≥10px)
-    if (cellSize >= 10) {
-        ctx.lineWidth = 0.5;
-        ctx.strokeStyle = '#E0E6EA';
-        ctx.beginPath();
-        for (let y = 0; y <= rows; y++) {
-            ctx.moveTo(0, y * cellSize);
-            ctx.lineTo(cols * cellSize, y * cellSize);
-        }
-        for (let x = 0; x <= cols; x++) {
-            ctx.moveTo(x * cellSize, 0);
-            ctx.lineTo(x * cellSize, rows * cellSize);
-        }
-        ctx.stroke();
     }
 
-    // Draw slightly thicker black boundaries around color groups for structure
-    ctx.lineWidth = 1.5; 
-    ctx.strokeStyle = '#2F3542';
-    ctx.beginPath();
-    for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-            let curr = gameState.gridData[y][x];
-            if(curr === -1) continue;
-            
-            if (x === cols - 1 || gameState.gridData[y][x+1] !== curr) {
-                ctx.moveTo((x+1)*cellSize, y*cellSize); ctx.lineTo((x+1)*cellSize, (y+1)*cellSize);
+    // Pass 2 — draw borders where adjacent work pixels have different colours
+    for (let wy = 0; wy < workH; wy++) {
+        for (let wx = 0; wx < workW; wx++) {
+            const ci = quantPixels[wy][wx];
+            // Right edge of this block
+            if (wx + 1 < workW && quantPixels[wy][wx+1] !== ci) {
+                const dx = wx*S + S - 1;
+                for (let sy = 0; sy < S; sy++) sp(dx, wy*S+sy, 40, 40, 40);
             }
-            if (y === rows - 1 || gameState.gridData[y+1][x] !== curr) {
-                ctx.moveTo(x*cellSize, (y+1)*cellSize); ctx.lineTo((x+1)*cellSize, (y+1)*cellSize);
-            }
-            if (x === 0 || gameState.gridData[y][x-1] !== curr) {
-                 ctx.moveTo(x*cellSize, y*cellSize); ctx.lineTo(x*cellSize, (y+1)*cellSize);
-            }
-            if (y === 0 || gameState.gridData[y-1][x] !== curr){
-                 ctx.moveTo(x*cellSize, y*cellSize); ctx.lineTo((x+1)*cellSize, y*cellSize);
+            // Bottom edge of this block
+            if (wy + 1 < workH && quantPixels[wy+1][wx] !== ci) {
+                const dy = wy*S + S - 1;
+                for (let sx = 0; sx < S; sx++) sp(wx*S+sx, dy, 40, 40, 40);
             }
         }
     }
-    ctx.stroke();
-    
-    // Draw ONE number per region (at its center-most cell) — like real paint-by-numbers
-    ctx.textAlign = 'center';
+
+    // Canvas border
+    for (let d = 0; d < canvasW; d++) { sp(d, 0, 40, 40, 40); sp(d, canvasH-1, 40, 40, 40); }
+    for (let d = 0; d < canvasH; d++) { sp(0, d, 40, 40, 40); sp(canvasW-1, d, 40, 40, 40); }
+
+    ctx.putImageData(imgData, 0, 0);
+
+    // Draw region numbers at each region's representative cell
+    ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
 
-    // Build a lookup: "x,y" -> regionId for rep cells only
-    const repCellMap = {}; // "x,y" -> regionId
-    for (const regionId in gameState.regionRepCells) {
-        const rc = gameState.regionRepCells[regionId];
-        repCellMap[`${rc.x},${rc.y}`] = parseInt(regionId);
-    }
+    for (const ridStr in gameState.regionRepCells) {
+        const rid             = parseInt(ridStr);
+        const { x: wx, y: wy } = gameState.regionRepCells[rid];
+        const ci              = quantPixels[wy][wx];
+        if (ci < 0 || paintedRegions.has(rid)) continue;
 
-    for (const key in repCellMap) {
-        const regionId = repCellMap[key];
-        const [rx, ry] = key.split(',').map(Number);
-        const colorIdx = gameState.gridData[ry][rx];
-        if (colorIdx === -1) continue;
-
-        const cellId = `${rx},${ry}`;
-        if (gameState.paintedCells.has(cellId)) continue;
-
-        const isSelected = gameState.selectedColor === colorIdx;
-
-        // Scale the number with the region's pixel area so large regions always have
-        // a clearly readable number even when individual cells are small.
-        const regionSize = gameState.regionSizes[regionId] || 1;
-        const numSize = Math.max(11, Math.min(Math.sqrt(regionSize * cellSize * cellSize) * 0.22, 20));
+        const regionSize = gameState.regionSizes[rid] || 1;
+        const numSize    = Math.max(9, Math.min(Math.sqrt(regionSize) * S * 0.35, 20));
+        const cx         = wx * S + Math.floor(S / 2);
+        const cy         = wy * S + Math.floor(S / 2);
+        const isSelected = gameState.selectedColor === ci;
 
         if (isSelected) {
-            // Bright red + bold for the active color
             ctx.fillStyle = '#FF4757';
-            ctx.font = `900 ${Math.round(numSize * 1.15)}px 'Nunito'`;
+            ctx.font      = `900 ${Math.round(numSize * 1.15)}px 'Nunito'`;
         } else if (gameState.selectedColor !== null) {
-            // Always keep all other numbers visible (dim) so the canvas never looks blank
-            ctx.fillStyle = 'rgba(107, 126, 143, 0.38)';
-            ctx.font = `bold ${Math.round(numSize * 0.85)}px 'Nunito'`;
+            ctx.fillStyle = 'rgba(80,100,120,0.35)';
+            ctx.font      = `bold ${Math.round(numSize * 0.85)}px 'Nunito'`;
         } else {
-            // No color selected — show all numbers at full opacity
-            ctx.fillStyle = '#6B7E8F';
-            ctx.font = `bold ${Math.round(numSize)}px 'Nunito'`;
+            ctx.fillStyle = '#3D4B5C';
+            ctx.font      = `bold ${Math.round(numSize)}px 'Nunito'`;
         }
-        ctx.fillText(colorIdx + 1, rx * cellSize + cellSize / 2, ry * cellSize + cellSize / 2);
+        ctx.fillText(ci + 1, cx, cy);
     }
 }
 
+// ─── Colour palette UI ───────────────────────────────────────────────────────
 function buildPaletteUI() {
-    const container = document.getElementById('color-palette');
-    container.innerHTML = '';
-
-    // Also build mobile palette
+    const container       = document.getElementById('color-palette');
+    container.innerHTML   = '';
     const mobileContainer = document.getElementById('mobile-color-palette');
     if (mobileContainer) mobileContainer.innerHTML = '';
 
     gameState.palette.forEach((color, index) => {
-        let brightness = (color.r * 299 + color.g * 587 + color.b * 114) / 1000;
-        let textColor = brightness > 128 ? '#2F3542' : '#FFFFFF';
+        const brightness = (color.r * 299 + color.g * 587 + color.b * 114) / 1000;
+        const textColor  = brightness > 128 ? '#2F3542' : '#FFFFFF';
 
         function createSwatch() {
-            let swatch = document.createElement('div');
-            swatch.className = 'color-swatch';
-            swatch.style.backgroundColor = `rgb(${color.r}, ${color.g}, ${color.b})`;
-            swatch.innerText = index + 1;
-            swatch.style.color = textColor;
+            const swatch          = document.createElement('div');
+            swatch.className      = 'color-swatch';
+            swatch.style.backgroundColor = `rgb(${color.r},${color.g},${color.b})`;
+            swatch.innerText      = index + 1;
+            swatch.style.color    = textColor;
 
-            if (gameState.colorsCompleted.has(index)) {
-                swatch.classList.add('completed');
-            }
-            if (gameState.selectedColor === index) {
-                swatch.classList.add('active');
-            }
+            if (gameState.colorsCompleted.has(index)) swatch.classList.add('completed');
+            if (gameState.selectedColor === index)    swatch.classList.add('active');
 
             swatch.addEventListener('click', () => {
                 document.querySelectorAll('.color-swatch').forEach(el => el.classList.remove('active'));
                 gameState.selectedColor = index;
-
-                // Mark active on both palettes
                 document.querySelectorAll('.color-swatch').forEach(el => {
                     if (el.innerText == String(index + 1)) el.classList.add('active');
                 });
-
-                const canvas = document.getElementById('paint-canvas');
-                canvas.style.cursor = 'crosshair';
-
+                document.getElementById('paint-canvas').style.cursor = 'crosshair';
                 updateMobileFabColor();
                 updateProgressBar();
-
-                // Close mobile popup after selection
                 if (isMobile()) {
                     document.getElementById('mobile-palette-popup').classList.add('hidden');
                     document.getElementById('mobile-palette-popup').classList.remove('visible');
                     document.getElementById('mobile-palette-overlay').classList.add('hidden');
                     document.getElementById('mobile-palette-overlay').classList.remove('visible');
                 }
-
                 drawGameCanvas();
             });
-
             return swatch;
         }
 
@@ -924,214 +579,158 @@ function buildPaletteUI() {
     });
 }
 
+// ─── Progress bar ────────────────────────────────────────────────────────────
 function updateProgressBar() {
     const bar = document.getElementById('color-progress');
     if (!bar) return;
 
-    if (gameState.selectedColor === null || gameState.gridData.length === 0) {
+    if (gameState.selectedColor === null || !gameState.quantPixels.length) {
         bar.classList.add('hidden');
         return;
     }
 
     const colorIdx = gameState.selectedColor;
-    const total = gameState.colorTotals[colorIdx] || 0;
+    const total    = gameState.colorTotals[colorIdx] || 0;
     if (total === 0) return;
 
-    // Count how many cells of this color have been painted
+    // Count painted pixels for this color (sum sizes of painted regions with this color)
     let painted = 0;
-    const rows = gameState.gridData.length;
-    const cols = gameState.gridData[0].length;
-    for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-            if (gameState.gridData[y][x] === colorIdx && gameState.paintedCells.has(`${x},${y}`)) {
-                painted++;
-            }
-        }
+    for (const ridStr in gameState.regionColor) {
+        const rid = parseInt(ridStr);
+        if (gameState.regionColor[rid] === colorIdx && gameState.paintedRegions.has(rid))
+            painted += gameState.regionSizes[rid] || 0;
     }
 
-    const pct = Math.round((painted / total) * 100);
+    const pct  = Math.round((painted / total) * 100);
     const left = total - painted;
+    const c    = gameState.palette[colorIdx];
+    const cs   = `rgb(${c.r},${c.g},${c.b})`;
 
-    const c = gameState.palette[colorIdx];
-    const colorStr = `rgb(${c.r}, ${c.g}, ${c.b})`;
-
-    document.getElementById('cp-swatch').style.backgroundColor = colorStr;
-    document.getElementById('cp-fill').style.backgroundColor = colorStr;
-    document.getElementById('cp-fill').style.width = `${pct}%`;
-    document.getElementById('cp-name').textContent = `Color ${colorIdx + 1}`;
+    document.getElementById('cp-swatch').style.backgroundColor = cs;
+    document.getElementById('cp-fill').style.backgroundColor   = cs;
+    document.getElementById('cp-fill').style.width             = `${pct}%`;
+    document.getElementById('cp-name').textContent             = `Color ${colorIdx + 1}`;
 
     if (pct >= 100) {
         document.getElementById('cp-remaining').textContent = 'All done! 🌟';
-        document.getElementById('cp-pct').textContent = '🎉';
-        // Re-trigger the pop animation
+        document.getElementById('cp-pct').textContent       = '🎉';
         bar.classList.remove('cp-complete');
-        void bar.offsetWidth; // force reflow
+        void bar.offsetWidth;
         bar.classList.add('cp-complete');
     } else {
-        const spotsWord = left === 1 ? 'spot left' : 'spots left';
-        document.getElementById('cp-remaining').textContent = `${left} ${spotsWord}`;
-        document.getElementById('cp-pct').textContent = `${pct}%`;
+        document.getElementById('cp-remaining').textContent = `${left} pixels left`;
+        document.getElementById('cp-pct').textContent       = `${pct}%`;
         bar.classList.remove('cp-complete');
     }
-
     bar.classList.remove('hidden');
 }
 
-// Check every single square to see if it's painted!
+// ─── Win condition ───────────────────────────────────────────────────────────
 function checkWinCondition() {
-    let totalSquares = 0;
-    const rows = gameState.gridData.length;
-    const cols = gameState.gridData[0].length;
-    
-    // 1. Check if the currently selected color just finished!
-    if (gameState.selectedColor !== null && !gameState.colorsCompleted.has(gameState.selectedColor)) {
-        let paintedForColor = 0;
-        for (let y = 0; y < rows; y++) {
-            for (let x = 0; x < cols; x++) {
-                if (gameState.gridData[y][x] === gameState.selectedColor && gameState.paintedCells.has(`${x},${y}`)) {
-                    paintedForColor++;
-                }
-            }
-        }
-        
-        if (paintedForColor >= gameState.colorTotals[gameState.selectedColor]) {
-            gameState.colorsCompleted.add(gameState.selectedColor);
-            
-            // FIREWORKS!
-            confetti({
-                particleCount: 150,
-                spread: 70,
-                origin: { y: 0.6 },
-                zIndex: 9999
-            });
-            
-            buildPaletteUI(); // Add the checkmark!
-        }
-    }
-    
-    // 2. Check complete win overall
-    for(let y=0; y<rows; y++){
-        for(let x=0; x<cols; x++){
-            if(gameState.gridData[y][x] !== -1) totalSquares++;
-        }
-    }
-    
-    if (gameState.paintedCells.size >= totalSquares) {
-        setTimeout(() => {
-            // HUGE FIREWORKS!
-            let duration = 3 * 1000;
-            let animationEnd = Date.now() + duration;
-            let defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 9999 };
+    const colorIdx = gameState.selectedColor;
 
-            let interval = setInterval(function() {
-                let timeLeft = animationEnd - Date.now();
+    // Check if the just-painted colour is now complete
+    if (colorIdx !== null && !gameState.colorsCompleted.has(colorIdx)) {
+        let painted = 0;
+        for (const ridStr in gameState.regionColor) {
+            const rid = parseInt(ridStr);
+            if (gameState.regionColor[rid] === colorIdx && gameState.paintedRegions.has(rid))
+                painted += gameState.regionSizes[rid] || 0;
+        }
+        if (painted >= (gameState.colorTotals[colorIdx] || 0)) {
+            gameState.colorsCompleted.add(colorIdx);
+            confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, zIndex: 9999 });
+            buildPaletteUI();
+        }
+    }
+
+    // Check full win
+    const totalRegions   = Object.keys(gameState.regionSizes).filter(r => gameState.regionSizes[r] > 0).length;
+    if (gameState.paintedRegions.size >= totalRegions) {
+        setTimeout(() => {
+            const duration     = 3000;
+            const animationEnd = Date.now() + duration;
+            const defaults     = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 9999 };
+            const interval     = setInterval(() => {
+                const timeLeft = animationEnd - Date.now();
                 if (timeLeft <= 0) return clearInterval(interval);
-                let particleCount = 50 * (timeLeft / duration);
-                confetti(Object.assign({}, defaults, { particleCount, origin: { x: Math.random(), y: Math.random() - 0.2 } }));
+                confetti(Object.assign({}, defaults, {
+                    particleCount: 50 * (timeLeft / duration),
+                    origin: { x: Math.random(), y: Math.random() - 0.2 }
+                }));
             }, 250);
-            
             alert("🎉 YAY! You painted every single square! What a beautiful picture! 🎉");
         }, 500);
     }
 }
 
+// ─── Canvas interaction ──────────────────────────────────────────────────────
 function handleCanvasClick(e) {
     if (gameState.selectedColor === null) {
         alert("Oops! Pick a beautiful paint color from the bottom first!");
         return;
     }
-    
-    const canvas = document.getElementById('paint-canvas');
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    
-    const clickX = (e.clientX - rect.left) * scaleX;
-    const clickY = (e.clientY - rect.top) * scaleY;
-    
-    const cols = gameState.gridData[0].length;
-    const cellSize = canvas.width / cols;
-    
-    const blockX = Math.floor(clickX / cellSize);
-    const blockY = Math.floor(clickY / cellSize);
-    
-    if(blockY >= 0 && blockY < gameState.gridData.length && blockX >= 0 && blockX < cols) {
-        let colorIdx = gameState.gridData[blockY][blockX];
-        if (colorIdx !== -1) {
-            if (colorIdx === gameState.selectedColor) {
-                // Paint the entire connected region automatically!
-                let targetRegionId = gameState.regionData[blockY][blockX];
-                for (let y = 0; y < gameState.gridData.length; y++) {
-                    for (let x = 0; x < cols; x++) {
-                        if (gameState.regionData[y][x] === targetRegionId) {
-                            gameState.paintedCells.add(`${x},${y}`);
-                        }
-                    }
-                }
-                
-                // Immediately clear the custom cursor since the area is now painted
-                canvas.style.cursor = 'crosshair';
-                
-                drawGameCanvas();
-                updateProgressBar();
-                checkWinCondition();
-            } else {
-                canvas.style.transform = "rotate(3deg)";
-                setTimeout(() => canvas.style.transform = "rotate(-3deg)", 100);
-                setTimeout(() => canvas.style.transform = "rotate(0deg)", 200);
-            }
-        }
+    if (!gameState.quantPixels.length) return;
+
+    const canvas  = document.getElementById('paint-canvas');
+    const rect    = canvas.getBoundingClientRect();
+    const clickX  = (e.clientX - rect.left)  * (canvas.width  / rect.width);
+    const clickY  = (e.clientY - rect.top)   * (canvas.height / rect.height);
+    const S       = isMobile() ? MOBILE_DISPLAY_SCALE : DESKTOP_DISPLAY_SCALE;
+    const wx      = Math.floor(clickX / S);
+    const wy      = Math.floor(clickY / S);
+
+    if (wx < 0 || wx >= gameState.workW || wy < 0 || wy >= gameState.workH) return;
+
+    const ci  = gameState.quantPixels[wy][wx];
+    if (ci < 0) return;
+    const rid = gameState.regionLabel[wy][wx];
+    if (rid < 0) return;
+
+    if (ci === gameState.selectedColor) {
+        gameState.paintedRegions.add(rid);
+        canvas.style.cursor = 'crosshair';
+        drawGameCanvas();
+        updateProgressBar();
+        checkWinCondition();
+    } else {
+        canvas.style.transform = "rotate(3deg)";
+        setTimeout(() => canvas.style.transform = "rotate(-3deg)", 100);
+        setTimeout(() => canvas.style.transform = "rotate(0deg)",  200);
     }
 }
 
 function handleCanvasMouseMove(e) {
-    if (gameState.selectedColor === null) return;
-    
+    if (gameState.selectedColor === null || !gameState.quantPixels.length) return;
+
     const canvas = document.getElementById('paint-canvas');
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top) * scaleY;
-    
-    const cols = gameState.gridData[0].length;
-    const cellSize = canvas.width / cols;
-    
-    const blockX = Math.floor(x / cellSize);
-    const blockY = Math.floor(y / cellSize);
-    
-    if(blockY >= 0 && blockY < gameState.gridData.length && blockX >= 0 && blockX < cols) {
-        let colorIdx = gameState.gridData[blockY][blockX];
-        let cellId = `${blockX},${blockY}`;
-        
-        // Only show custom cursor if we are hovering over the EXACT right color we need to paint, 
-        // and it hasn't been painted yet!
-        if (colorIdx === gameState.selectedColor && !gameState.paintedCells.has(cellId)) {
-            let regionId = gameState.regionData[blockY][blockX];
-            let size = gameState.regionSizes[regionId];
-            
-            let c = gameState.palette[gameState.selectedColor];
-            let hexColor = `%23${c.r.toString(16).padStart(2, '0')}${c.g.toString(16).padStart(2, '0')}${c.b.toString(16).padStart(2, '0')}`;
-            
-            let cursorUrl = "";
-            let hotspot = "";
-            
-            // If the area is big (more than 15 blocks), give them a SPRAY CAN
-            if (size > 15) {
-                // SVG Spray Can with chosen color spilling out!
-                cursorUrl = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24'><path fill='%232F3542' d='M8 4h8v2H8V4zm-2 4h12v14a2 2 0 01-2 2H8a2 2 0 01-2-2V8zm6 3a3 3 0 100 6 3 3 0 000-6z'/><circle cx='8' cy='4' r='2' fill='${hexColor}'/><path fill='${hexColor}' d='M8 0h2v2H8z'/></svg>`;
-                hotspot = "16 0"; // Top middle of the can
-            } else {
-                // SVG Paint Brush dripping the chosen color!
-                cursorUrl = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24'><path fill='%238B4513' d='M20.71 5.63l-2.34-2.34a2 2 0 00-2.83 0l-3.23 3.23 5.17 5.17 3.23-3.23a2 2 0 000-2.83z'/><path fill='${hexColor}' d='M10.88 7.94L3.8 15.02c-.85.85-.92 2.2-.18 3.12l.74.88c.95 1.14 2.65 1.25 3.73.25l7.98-7.39-5.19-3.94z'/><path fill='${hexColor}' d='M3.46 19.34L2 22l2.66-1.46c-.46-.35-.85-.75-1.2-1.2z'/></svg>`;
-                hotspot = "2 22"; // Bottom left tip of the brush
-            }
-            
-            canvas.style.cursor = `url("${cursorUrl}") ${hotspot}, pointer`;
+    const rect   = canvas.getBoundingClientRect();
+    const clickX = (e.clientX - rect.left)  * (canvas.width  / rect.width);
+    const clickY = (e.clientY - rect.top)   * (canvas.height / rect.height);
+    const S      = isMobile() ? MOBILE_DISPLAY_SCALE : DESKTOP_DISPLAY_SCALE;
+    const wx     = Math.floor(clickX / S);
+    const wy     = Math.floor(clickY / S);
+
+    if (wx < 0 || wx >= gameState.workW || wy < 0 || wy >= gameState.workH) {
+        canvas.style.cursor = 'crosshair'; return;
+    }
+
+    const ci  = gameState.quantPixels[wy][wx];
+    const rid = gameState.regionLabel[wy][wx];
+
+    if (ci === gameState.selectedColor && !gameState.paintedRegions.has(rid)) {
+        const size     = gameState.regionSizes[rid] || 0;
+        const c        = gameState.palette[gameState.selectedColor];
+        const hex      = `%23${c.r.toString(16).padStart(2,'0')}${c.g.toString(16).padStart(2,'0')}${c.b.toString(16).padStart(2,'0')}`;
+        let cursorUrl, hotspot;
+        if (size > 300) {
+            cursorUrl = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24'><path fill='%232F3542' d='M8 4h8v2H8V4zm-2 4h12v14a2 2 0 01-2 2H8a2 2 0 01-2-2V8zm6 3a3 3 0 100 6 3 3 0 000-6z'/><circle cx='8' cy='4' r='2' fill='${hex}'/><path fill='${hex}' d='M8 0h2v2H8z'/></svg>`;
+            hotspot   = "16 0";
         } else {
-            canvas.style.cursor = 'crosshair';
+            cursorUrl = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24'><path fill='%238B4513' d='M20.71 5.63l-2.34-2.34a2 2 0 00-2.83 0l-3.23 3.23 5.17 5.17 3.23-3.23a2 2 0 000-2.83z'/><path fill='${hex}' d='M10.88 7.94L3.8 15.02c-.85.85-.92 2.2-.18 3.12l.74.88c.95 1.14 2.65 1.25 3.73.25l7.98-7.39-5.19-3.94z'/><path fill='${hex}' d='M3.46 19.34L2 22l2.66-1.46c-.46-.35-.85-.75-1.2-1.2z'/></svg>`;
+            hotspot   = "2 22";
         }
+        canvas.style.cursor = `url("${cursorUrl}") ${hotspot}, pointer`;
     } else {
         canvas.style.cursor = 'crosshair';
     }
@@ -1143,17 +742,122 @@ function resetGame() {
     document.getElementById('color-progress').classList.add('hidden');
     hideMobileFab();
     gameState = {
-        gridData: [],
-        regionData: [],
-        regionSizes: {},
-        regionRepCells: {},
-        colorTotals: [],
-        colorsCompleted: new Set(),
-        palette: [],
-        selectedColor: null,
-        paintedCells: new Set()
+        quantPixels: [], regionLabel: [], regionColor: {}, regionSizes: {},
+        regionRepCells: {}, colorTotals: [], colorsCompleted: new Set(),
+        palette: [], selectedColor: null, paintedRegions: new Set(), workW: 0, workH: 0,
     };
     const canvas = document.getElementById('paint-canvas');
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+}
+
+// ─── Median Cut quantisation ─────────────────────────────────────────────────
+function medianCut(colors, k) {
+    if (colors.length === 0) return [];
+    k = Math.min(k, colors.length);
+    let boxes = [colors.slice()];
+
+    while (boxes.length < k) {
+        let bigIdx = 0, bigVol = -1;
+        for (let i = 0; i < boxes.length; i++) {
+            if (boxes[i].length < 2) continue;
+            const v = _boxVolume(boxes[i]);
+            if (v > bigVol) { bigVol = v; bigIdx = i; }
+        }
+        if (bigVol <= 0) break;
+
+        const box = boxes[bigIdx];
+        let minR=255,maxR=0, minG=255,maxG=0, minB=255,maxB=0;
+        for (const c of box) {
+            if (c.r<minR) minR=c.r; if (c.r>maxR) maxR=c.r;
+            if (c.g<minG) minG=c.g; if (c.g>maxG) maxG=c.g;
+            if (c.b<minB) minB=c.b; if (c.b>maxB) maxB=c.b;
+        }
+        const wR=(maxR-minR)*1.414, wG=(maxG-minG)*2.0, wB=(maxB-minB)*1.732;
+        let ch = 'r';
+        if (wG >= wR && wG >= wB) ch = 'g';
+        else if (wB >= wR) ch = 'b';
+
+        box.sort((a, b) => a[ch] - b[ch]);
+        const mid = Math.floor(box.length / 2);
+        boxes.splice(bigIdx, 1, box.slice(0, mid), box.slice(mid));
+    }
+
+    return boxes.map(box => {
+        let sR=0,sG=0,sB=0;
+        for (const c of box) { sR+=c.r; sG+=c.g; sB+=c.b; }
+        return { r: Math.round(sR/box.length), g: Math.round(sG/box.length), b: Math.round(sB/box.length) };
+    });
+}
+
+function _boxVolume(box) {
+    let minR=255,maxR=0, minG=255,maxG=0, minB=255,maxB=0;
+    for (const c of box) {
+        if (c.r<minR) minR=c.r; if (c.r>maxR) maxR=c.r;
+        if (c.g<minG) minG=c.g; if (c.g>maxG) maxG=c.g;
+        if (c.b<minB) minB=c.b; if (c.b>maxB) maxB=c.b;
+    }
+    return (maxR-minR+1)*(maxG-minG+1)*(maxB-minB+1);
+}
+
+// ─── k-means++ initialisation ────────────────────────────────────────────────
+function kMeansInit(colors, k) {
+    const centroids = [{ ...colors[Math.floor(Math.random() * colors.length)] }];
+    while (centroids.length < k) {
+        const dists = colors.map(c => {
+            let min = Infinity;
+            for (const ct of centroids) {
+                const d = colorDistSq(c.r, c.g, c.b, ct.r, ct.g, ct.b);
+                if (d < min) min = d;
+            }
+            return min;
+        });
+        const total = dists.reduce((a, b) => a + b, 0);
+        let r = Math.random() * total, cum = 0, chosen = colors.length - 1;
+        for (let j = 0; j < dists.length; j++) {
+            cum += dists[j];
+            if (r <= cum) { chosen = j; break; }
+        }
+        centroids.push({ ...colors[chosen] });
+    }
+    return centroids;
+}
+
+// ─── k-means refinement ──────────────────────────────────────────────────────
+function kMeans(colors, k, initialCentroids) {
+    if (colors.length === 0) return [];
+    let centroids = initialCentroids ? initialCentroids.map(c => ({ ...c })) : kMeansInit(colors, k);
+    const iters   = initialCentroids ? 15 : 20;
+
+    for (let iter = 0; iter < iters; iter++) {
+        const sR = new Float64Array(k), sG = new Float64Array(k), sB = new Float64Array(k);
+        const cnt = new Int32Array(k);
+        for (const c of colors) {
+            let best = Infinity, bi = 0;
+            for (let i = 0; i < k; i++) {
+                const d = colorDistSq(c.r, c.g, c.b, centroids[i].r, centroids[i].g, centroids[i].b);
+                if (d < best) { best = d; bi = i; }
+            }
+            sR[bi]+=c.r; sG[bi]+=c.g; sB[bi]+=c.b; cnt[bi]++;
+        }
+        for (let i = 0; i < k; i++) {
+            if (cnt[i] > 0) centroids[i] = {
+                r: Math.round(sR[i]/cnt[i]), g: Math.round(sG[i]/cnt[i]), b: Math.round(sB[i]/cnt[i])
+            };
+        }
+    }
+    return centroids;
+}
+
+function colorDistSq(r1, g1, b1, r2, g2, b2) {
+    const dr=r1-r2, dg=g1-g2, db=b1-b2;
+    return 2*dr*dr + 4*dg*dg + 3*db*db;
+}
+
+function findNearestColorIndex(r, g, b, palette) {
+    let best = Infinity, idx = 0;
+    for (let i = 0; i < palette.length; i++) {
+        const d = colorDistSq(r, g, b, palette[i].r, palette[i].g, palette[i].b);
+        if (d < best) { best = d; idx = i; }
+    }
+    return idx;
 }
