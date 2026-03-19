@@ -1,8 +1,8 @@
-const MAX_COLORS            = 24;
-const MOBILE_DISPLAY_SCALE  = 3;   // each work-pixel renders as S×S screen pixels
+const MAX_COLORS            = 20;
+const MOBILE_DISPLAY_SCALE  = 4;   // each work-pixel renders as S×S screen pixels
 const DESKTOP_DISPLAY_SCALE = 3;
-const MOBILE_MIN_REGION     = 200; // work pixels — merge regions smaller than this
-const DESKTOP_MIN_REGION    = 500;
+const MOBILE_MIN_REGION     = 30;  // work pixels — merge regions smaller than this
+const DESKTOP_MIN_REGION    = 80;
 
 let gameState = {
     quantPixels:    [],   // [y][x] → palette color index (Int16Array rows)
@@ -236,7 +236,7 @@ function processImage(img) {
 
     // Work canvas: fits in available area, preserves image aspect ratio — NO CROPPING
     const imgAspect = img.width / img.height;
-    let workW = Math.min(Math.floor(availW / S), mobile ? 160 : 400);
+    let workW = Math.min(Math.floor(availW / S), mobile ? 120 : 500);
     let workH = Math.round(workW / imgAspect);
     // Clamp height too
     if (workH * S > availH) {
