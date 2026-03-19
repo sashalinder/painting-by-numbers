@@ -90,11 +90,15 @@ function setupUI() {
                     const ac = regionActualColor[rid] || palette[ci];
                     r = ac.r; g = ac.g; b = ac.b;
                 } else {
-                    const p    = (wy * workW + wx) * 4;
-                    const gray = cellData
-                        ? Math.round(cellData[p] * 0.299 + cellData[p+1] * 0.587 + cellData[p+2] * 0.114)
-                        : 200;
-                    r = gray; g = gray; b = gray;
+                    const p  = (wy * workW + wx) * 4;
+                    const cr = cellData ? cellData[p]   : 180;
+                    const cg = cellData ? cellData[p+1] : 180;
+                    const cb = cellData ? cellData[p+2] : 180;
+                    const gray = Math.round(cr * 0.299 + cg * 0.587 + cb * 0.114);
+                    const tint = 0.35;
+                    r = Math.round(gray * (1 - tint) + cr * tint);
+                    g = Math.round(gray * (1 - tint) + cg * tint);
+                    b = Math.round(gray * (1 - tint) + cb * tint);
                 }
                 for (let sy = 0; sy < S; sy++)
                     for (let sx = 0; sx < S; sx++)
@@ -533,14 +537,19 @@ function drawGameCanvas() {
                 const ac = regionActualColor[rid] || palette[ci];
                 r = ac.r; g = ac.g; b = ac.b;
             } else {
-                // Unpainted: each cell shows ITS OWN actual colour in grayscale.
-                // This preserves all texture (cat stripes, fur shading, edges) so
-                // the canvas looks like the real image in B&W — not a blob.
-                const p    = (wy * workW + wx) * 4;
-                const gray = cellData
-                    ? Math.round(cellData[p] * 0.299 + cellData[p+1] * 0.587 + cellData[p+2] * 0.114)
-                    : 200;
-                r = gray; g = gray; b = gray;
+                // Unpainted: lightly tinted grayscale (30% actual color + 70% gray).
+                // Pure gray loses contrast (orange cat ≈ blue background in luma).
+                // The tint keeps the image immediately recognisable while the full
+                // color is only revealed when the kid paints the region.
+                const p  = (wy * workW + wx) * 4;
+                const cr = cellData ? cellData[p]   : 180;
+                const cg = cellData ? cellData[p+1] : 180;
+                const cb = cellData ? cellData[p+2] : 180;
+                const gray  = Math.round(cr * 0.299 + cg * 0.587 + cb * 0.114);
+                const tint  = 0.35;
+                r = Math.round(gray * (1 - tint) + cr * tint);
+                g = Math.round(gray * (1 - tint) + cg * tint);
+                b = Math.round(gray * (1 - tint) + cb * tint);
             }
             for (let sy = 0; sy < S; sy++)
                 for (let sx = 0; sx < S; sx++)
