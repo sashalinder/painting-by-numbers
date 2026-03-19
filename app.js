@@ -264,16 +264,28 @@ function processImage(img) {
     workW = Math.max(10, workW);
     workH = Math.max(10, workH);
 
-    // Draw image to the small grid — browser bilinear downsampling averages each cell
+    // ── 1. Grid-resolution draw (for display tinted grayscale + regionActualColor) ──
     processingCanvas.width  = workW;
     processingCanvas.height = workH;
     ctx.drawImage(img, 0, 0, workW, workH);
     const pixelData     = ctx.getImageData(0, 0, workW, workH).data;
     const origPixelData = pixelData;
 
+    // ── 2. High-res draw for edge-accurate quantisation ──
+    // Each grid cell is sampled at superScale×superScale sub-pixels.
+    // The palette colour that wins the MAJORITY VOTE is assigned to the cell.
+    // This prevents boundary cells (cat/background edge) from getting a blended
+    // average colour that maps to the wrong palette entry.
+    const superScale = 4;
+    const hiW = workW * superScale, hiH = workH * superScale;
+    processingCanvas.width  = hiW;
+    processingCanvas.height = hiH;
+    ctx.drawImage(img, 0, 0, hiW, hiH);
+    const hiPixelData = ctx.getImageData(0, 0, hiW, hiH).data;
+
     const totalPx = workW * workH;
 
-    // Sample colors for palette building
+    // Sample colors for palette building (from grid-res — fast)
     const step         = Math.max(1, Math.floor(totalPx / 8000));
     const sampleColors = [];
     for (let i = 0; i < totalPx; i += step) {
@@ -299,14 +311,32 @@ function processImage(img) {
         return idx;
     };
 
+    // ── 3. Majority-vote quantisation ──
+    // For each grid cell, check superScale×superScale sub-pixels in the hi-res image.
+    // Assign the palette colour that appears most often → sharp silhouette edges.
     const quantPixels = [];
+    const subCount    = superScale * superScale;
+    const votes       = new Int32Array(palette.length);
     for (let y = 0; y < workH; y++) {
         const row = new Int16Array(workW);
         for (let x = 0; x < workW; x++) {
-            const p = (y * workW + x) * 4;
-            row[x]  = pixelData[p + 3] >= 128
-                ? cachedNearest(pixelData[p], pixelData[p+1], pixelData[p+2])
-                : -1;
+            votes.fill(0);
+            let transparent = 0;
+            for (let sy = 0; sy < superScale; sy++) {
+                for (let sx = 0; sx < superScale; sx++) {
+                    const hx = x * superScale + sx;
+                    const hy = y * superScale + sy;
+                    const hp = (hy * hiW + hx) * 4;
+                    if (hiPixelData[hp + 3] < 128) { transparent++; continue; }
+                    votes[cachedNearest(hiPixelData[hp], hiPixelData[hp+1], hiPixelData[hp+2])]++;
+                }
+            }
+            if (transparent > subCount / 2) { row[x] = -1; continue; }
+            let bestCI = 0, bestV = votes[0];
+            for (let i = 1; i < palette.length; i++) {
+                if (votes[i] > bestV) { bestV = votes[i]; bestCI = i; }
+            }
+            row[x] = bestCI;
         }
         quantPixels.push(row);
     }
