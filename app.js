@@ -1,23 +1,22 @@
-const MAX_COLORS            = 20;
-const MOBILE_DISPLAY_SCALE  = 4;   // each work-pixel renders as S×S screen pixels
-const DESKTOP_DISPLAY_SCALE = 3;
-const MOBILE_MIN_REGION     = 30;  // work pixels — merge regions smaller than this
-const DESKTOP_MIN_REGION    = 80;
+const MAX_COLORS     = 20;
+const GRID_W_DESKTOP = 80;  // cells wide on desktop — hardware downsamples each cell to avg color
+const GRID_W_MOBILE  = 40;  // cells wide on mobile
 
 let gameState = {
-    quantPixels:    [],   // [y][x] → palette color index (Int16Array rows)
-    regionLabel:    [],   // [y][x] → region ID (Int32Array rows)
-    regionColor:      {},   // region ID → palette color index
-    regionActualColor:{},   // region ID → {r,g,b} true average from original pixels
-    regionSizes:      {},   // region ID → pixel count (post-merge)
-    regionRepCells:   {},   // region ID → {x,y} in work coords for number placement
-    colorTotals:      [],   // palette index → total pixel count
+    quantPixels:      [],  // [y][x] → palette color index (Int16Array rows)
+    regionLabel:      [],  // [y][x] → region ID (Int32Array rows)
+    regionColor:      {},  // region ID → palette color index
+    regionActualColor:{},  // region ID → {r,g,b} true average color from original image
+    regionSizes:      {},  // region ID → cell count (post-merge)
+    regionRepCells:   {},  // region ID → {x,y} in grid coords for number placement
+    colorTotals:      [],  // palette index → total cell count
     colorsCompleted:  new Set(),
     palette:          [],
     selectedColor:    null,
-    paintedRegions:   new Set(), // IDs of regions the player has painted
+    paintedRegions:   new Set(),
     workW: 0,
     workH: 0,
+    S:     10,  // display scale: pixels per grid cell (computed dynamically)
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -61,8 +60,7 @@ function setupUI() {
             alert('Paint something first! 🎨');
             return;
         }
-        const { quantPixels, regionLabel, workW, workH, palette, paintedRegions, regionActualColor } = gameState;
-        const S       = isMobile() ? MOBILE_DISPLAY_SCALE : DESKTOP_DISPLAY_SCALE;
+        const { quantPixels, regionLabel, workW, workH, palette, paintedRegions, regionActualColor, S } = gameState;
         const canvasW = workW * S;
         const canvasH = workH * S;
 
@@ -210,7 +208,11 @@ function handleImage(file) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// processImage — pixel-level segmentation
+// processImage — grid mosaic approach
+//   • Image is downsampled to a small grid (80×N desktop, 40×N mobile)
+//   • Each grid cell = hardware-averaged block of original pixels → accurate color
+//   • Connected same-color cells form regions → BFS on the tiny grid is fast
+//   • Display scale S fills the available screen width automatically
 // ─────────────────────────────────────────────────────────────────────────────
 function processImage(img) {
     const processingCanvas = document.getElementById('processing-canvas');
@@ -218,10 +220,9 @@ function processImage(img) {
 
     const mobile      = isMobile();
     const isLandscape = window.matchMedia('(max-height: 500px) and (orientation: landscape)').matches;
-    const S           = mobile ? MOBILE_DISPLAY_SCALE : DESKTOP_DISPLAY_SCALE;
-    const minRegion   = mobile ? MOBILE_MIN_REGION    : DESKTOP_MIN_REGION;
+    const minRegion   = mobile ? 2 : 4;  // cells — very small since each cell is already averaged
 
-    // Available screen area for the canvas
+    // Available screen area
     let availW, availH;
     if (mobile && !isLandscape) {
         availH = window.innerHeight - 210;
@@ -234,26 +235,29 @@ function processImage(img) {
         availH = Math.min(window.innerHeight - 150, 900);
     }
 
-    // Work canvas: fits in available area, preserves image aspect ratio — NO CROPPING
+    // Grid size: fixed cell count, aspect ratio preserved
     const imgAspect = img.width / img.height;
-    let workW = Math.min(Math.floor(availW / S), mobile ? 120 : 500);
+    let workW = mobile ? GRID_W_MOBILE : GRID_W_DESKTOP;
     let workH = Math.round(workW / imgAspect);
-    // Clamp height too
+
+    // Display scale: fill available width, minimum 6px per cell
+    let S = Math.max(6, Math.floor(availW / workW));
+
+    // Clamp height — reduce grid rows if canvas would be too tall
     if (workH * S > availH) {
         workH = Math.floor(availH / S);
         workW = Math.round(workH * imgAspect);
+        S = Math.max(6, Math.floor(availW / workW));
     }
-    workW = Math.max(20, workW);
-    workH = Math.max(20, workH);
+    workW = Math.max(10, workW);
+    workH = Math.max(10, workH);
 
+    // Draw image to the small grid — browser bilinear downsampling averages each cell
     processingCanvas.width  = workW;
     processingCanvas.height = workH;
-
-    // Draw once — no blur. ctx.drawImage already does smooth bilinear downsampling.
-    // Adding blur on top mixes adjacent colors (e.g. orange fur + blue background → brown).
     ctx.drawImage(img, 0, 0, workW, workH);
     const pixelData     = ctx.getImageData(0, 0, workW, workH).data;
-    const origPixelData = pixelData; // same source for both quantisation and actual colours
+    const origPixelData = pixelData;
 
     const totalPx = workW * workH;
 
@@ -384,6 +388,7 @@ function processImage(img) {
     gameState.palette          = compactPalette;
     gameState.workW            = workW;
     gameState.workH            = workH;
+    gameState.S                = S;
     gameState.paintedRegions   = new Set();
     gameState.selectedColor    = null;
     gameState.colorsCompleted  = new Set();
@@ -486,10 +491,8 @@ function mergeSmallPixelRegions(quantPixels, regionLabel, regionColor, regionSiz
 
 // ─── Render the paint-by-numbers canvas ─────────────────────────────────────
 function drawGameCanvas() {
-    const { quantPixels, regionLabel, workW, workH, palette, paintedRegions, regionActualColor } = gameState;
-    if (!quantPixels.length) return;
-
-    const S       = isMobile() ? MOBILE_DISPLAY_SCALE : DESKTOP_DISPLAY_SCALE;
+    const { quantPixels, regionLabel, workW, workH, palette, paintedRegions, regionActualColor, S } = gameState;
+    if (!quantPixels.length || !S) return;
     const canvasW = workW * S;
     const canvasH = workH * S;
 
@@ -733,7 +736,7 @@ function handleCanvasClick(e) {
     const rect    = canvas.getBoundingClientRect();
     const clickX  = (e.clientX - rect.left)  * (canvas.width  / rect.width);
     const clickY  = (e.clientY - rect.top)   * (canvas.height / rect.height);
-    const S       = isMobile() ? MOBILE_DISPLAY_SCALE : DESKTOP_DISPLAY_SCALE;
+    const S       = gameState.S || 10;
     const wx      = Math.floor(clickX / S);
     const wy      = Math.floor(clickY / S);
 
@@ -764,7 +767,7 @@ function handleCanvasMouseMove(e) {
     const rect   = canvas.getBoundingClientRect();
     const clickX = (e.clientX - rect.left)  * (canvas.width  / rect.width);
     const clickY = (e.clientY - rect.top)   * (canvas.height / rect.height);
-    const S      = isMobile() ? MOBILE_DISPLAY_SCALE : DESKTOP_DISPLAY_SCALE;
+    const S      = gameState.S || 10;
     const wx     = Math.floor(clickX / S);
     const wy     = Math.floor(clickY / S);
 
@@ -801,7 +804,7 @@ function resetGame() {
     gameState = {
         quantPixels: [], regionLabel: [], regionColor: {}, regionActualColor: {},
         regionSizes: {}, regionRepCells: {}, colorTotals: [], colorsCompleted: new Set(),
-        palette: [], selectedColor: null, paintedRegions: new Set(), workW: 0, workH: 0,
+        palette: [], selectedColor: null, paintedRegions: new Set(), workW: 0, workH: 0, S: 10,
     };
     const canvas = document.getElementById('paint-canvas');
     canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
