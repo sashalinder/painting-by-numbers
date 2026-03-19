@@ -1,4 +1,4 @@
-const MAX_COLORS     = 20;
+const MAX_COLORS     = 16;
 const GRID_W_DESKTOP = 160; // cells wide on desktop — fine enough to follow actual silhouette curves
 const GRID_W_MOBILE  = 80;  // cells wide on mobile
 
@@ -296,8 +296,15 @@ function processImage(img) {
     if (sampleColors.length === 0) sampleColors.push({ r: 128, g: 128, b: 128 });
 
     // Build palette: median cut gives deterministic coverage, k-means snaps centroids
-    const mcPalette = medianCut(sampleColors, MAX_COLORS);
-    const palette   = kMeans(sampleColors, MAX_COLORS, mcPalette);
+    const mcPalette  = medianCut(sampleColors, MAX_COLORS);
+    const rawPalette = kMeans(sampleColors, MAX_COLORS, mcPalette);
+
+    // ── Merge perceptually similar palette colours ──
+    // Without this, the palette contains e.g. 5 shades of beige that create
+    // confusing micro-regions within the cat.  By merging colours within
+    // RGB distance 35 we get fewer, visually distinct palette entries →
+    // larger, cleaner regions that are easy for kids to tap.
+    const palette = mergeSimilarPaletteColors(rawPalette, 35);
 
     // Per-pixel nearest-palette assignment with cache
     const nearestCache = new Map();
@@ -438,6 +445,49 @@ function processImage(img) {
 
     drawGameCanvas();
     buildPaletteUI();
+}
+
+// ─── Merge perceptually similar palette colours ─────────────────────────────
+// Eliminates near-duplicate entries (e.g. five shades of beige → one beige)
+// so quantisation produces larger, cleaner regions for kids to paint.
+function mergeSimilarPaletteColors(palette, threshold) {
+    const colors = palette.map(c => ({ ...c }));
+    const alive  = new Array(colors.length).fill(true);
+    // parent[i] = canonical index for colour i
+    const parent = colors.map((_, i) => i);
+
+    const find = (i) => { while (parent[i] !== i) i = parent[i] = parent[parent[i]]; return i; };
+
+    // Greedily merge closest pairs below threshold
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (let i = 0; i < colors.length; i++) {
+            if (!alive[i]) continue;
+            for (let j = i + 1; j < colors.length; j++) {
+                if (!alive[j]) continue;
+                const dr = colors[i].r - colors[j].r;
+                const dg = colors[i].g - colors[j].g;
+                const db = colors[i].b - colors[j].b;
+                if (Math.sqrt(dr*dr + dg*dg + db*db) < threshold) {
+                    // Average into i, kill j
+                    colors[i].r = Math.round((colors[i].r + colors[j].r) / 2);
+                    colors[i].g = Math.round((colors[i].g + colors[j].g) / 2);
+                    colors[i].b = Math.round((colors[i].b + colors[j].b) / 2);
+                    alive[j] = false;
+                    parent[j] = i;
+                    changed = true;
+                }
+            }
+        }
+    }
+    // Compact into new palette
+    const compacted  = [];
+    const oldToNew   = {};
+    for (let i = 0; i < colors.length; i++) {
+        if (alive[i]) { oldToNew[i] = compacted.length; compacted.push(colors[i]); }
+    }
+    return compacted;
 }
 
 // ─── BFS region labelling ────────────────────────────────────────────────────
