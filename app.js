@@ -1,6 +1,6 @@
-const MAX_COLORS     = 20;
-const GRID_W_DESKTOP = 80;  // cells wide on desktop — hardware downsamples each cell to avg color
-const GRID_W_MOBILE  = 40;  // cells wide on mobile
+const MAX_COLORS     = 18;
+const GRID_W_DESKTOP = 120; // cells wide on desktop — more cells = more detail
+const GRID_W_MOBILE  = 60;  // cells wide on mobile
 
 let gameState = {
     quantPixels:      [],  // [y][x] → palette color index (Int16Array rows)
@@ -17,6 +17,7 @@ let gameState = {
     workW: 0,
     workH: 0,
     S:     10,  // display scale: pixels per grid cell (computed dynamically)
+    cellData: null, // Uint8ClampedArray — per-cell actual RGBA from original image
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -76,18 +77,23 @@ function setupUI() {
             pix[i] = r; pix[i+1] = g; pix[i+2] = b; pix[i+3] = 255;
         };
 
+        const cellData = gameState.cellData;
+
         // Pass 1: fill blocks
         for (let wy = 0; wy < workH; wy++) {
             for (let wx = 0; wx < workW; wx++) {
                 const ci  = quantPixels[wy][wx];
                 if (ci < 0) continue;
                 const rid = regionLabel[wy][wx];
-                const ac  = regionActualColor[rid] || palette[ci];
                 let r, g, b;
                 if (paintedRegions.has(rid)) {
+                    const ac = regionActualColor[rid] || palette[ci];
                     r = ac.r; g = ac.g; b = ac.b;
                 } else {
-                    const gray = Math.round(ac.r * 0.299 + ac.g * 0.587 + ac.b * 0.114);
+                    const p    = (wy * workW + wx) * 4;
+                    const gray = cellData
+                        ? Math.round(cellData[p] * 0.299 + cellData[p+1] * 0.587 + cellData[p+2] * 0.114)
+                        : 200;
                     r = gray; g = gray; b = gray;
                 }
                 for (let sy = 0; sy < S; sy++)
@@ -96,22 +102,24 @@ function setupUI() {
             }
         }
 
-        // Pass 2: borders (same as drawGameCanvas so saved image matches screen)
+        // Pass 2: borders
         for (let wy = 0; wy < workH; wy++) {
             for (let wx = 0; wx < workW; wx++) {
                 const ci = quantPixels[wy][wx];
-                if (wx + 1 < workW && quantPixels[wy][wx+1] !== ci) {
-                    const dx = wx*S + S - 1;
-                    for (let sy = 0; sy < S; sy++) sp(dx, wy*S+sy, 40, 40, 40);
+                if (wx + 1 < workW) {
+                    const col = quantPixels[wy][wx+1] !== ci ? 30 : 190;
+                    const dx  = wx*S + S - 1;
+                    for (let sy = 0; sy < S; sy++) sp(dx, wy*S+sy, col, col, col);
                 }
-                if (wy + 1 < workH && quantPixels[wy+1][wx] !== ci) {
-                    const dy = wy*S + S - 1;
-                    for (let sx = 0; sx < S; sx++) sp(wx*S+sx, dy, 40, 40, 40);
+                if (wy + 1 < workH) {
+                    const col = quantPixels[wy+1][wx] !== ci ? 30 : 190;
+                    const dy  = wy*S + S - 1;
+                    for (let sx = 0; sx < S; sx++) sp(wx*S+sx, dy, col, col, col);
                 }
             }
         }
-        for (let d = 0; d < canvasW; d++) { sp(d, 0, 40, 40, 40); sp(d, canvasH-1, 40, 40, 40); }
-        for (let d = 0; d < canvasH; d++) { sp(0, d, 40, 40, 40); sp(canvasW-1, d, 40, 40, 40); }
+        for (let d = 0; d < canvasW; d++) { sp(d, 0, 30, 30, 30); sp(d, canvasH-1, 30, 30, 30); }
+        for (let d = 0; d < canvasH; d++) { sp(0, d, 30, 30, 30); sp(canvasW-1, d, 30, 30, 30); }
 
         sCtx.putImageData(imgData, 0, 0);
 
@@ -389,6 +397,7 @@ function processImage(img) {
     gameState.workW            = workW;
     gameState.workH            = workH;
     gameState.S                = S;
+    gameState.cellData         = pixelData;
     gameState.paintedRegions   = new Set();
     gameState.selectedColor    = null;
     gameState.colorsCompleted  = new Set();
@@ -510,22 +519,27 @@ function drawGameCanvas() {
         pix[i] = r; pix[i+1] = g; pix[i+2] = b; pix[i+3] = 255;
     };
 
-    // Pass 1 — fill each work pixel's S×S block with its display colour
+    const { cellData } = gameState;
+
+    // Pass 1 — fill each cell's S×S block
     for (let wy = 0; wy < workH; wy++) {
         for (let wx = 0; wx < workW; wx++) {
-            const ci = quantPixels[wy][wx];
-            if (ci < 0) continue; // transparent → leave as black default
-
+            const ci  = quantPixels[wy][wx];
+            if (ci < 0) continue;
             const rid = regionLabel[wy][wx];
-            const ac  = regionActualColor[rid] || palette[ci];
             let r, g, b;
             if (paintedRegions.has(rid)) {
-                // Painted: show the actual colour from the original photo
+                // Painted: use the true average colour for this region
+                const ac = regionActualColor[rid] || palette[ci];
                 r = ac.r; g = ac.g; b = ac.b;
             } else {
-                // Unpainted: show as grayscale — the image is recognisable in B&W
-                // before the kid starts colouring, just like a real paint-by-numbers
-                const gray = Math.round(ac.r * 0.299 + ac.g * 0.587 + ac.b * 0.114);
+                // Unpainted: each cell shows ITS OWN actual colour in grayscale.
+                // This preserves all texture (cat stripes, fur shading, edges) so
+                // the canvas looks like the real image in B&W — not a blob.
+                const p    = (wy * workW + wx) * 4;
+                const gray = cellData
+                    ? Math.round(cellData[p] * 0.299 + cellData[p+1] * 0.587 + cellData[p+2] * 0.114)
+                    : 200;
                 r = gray; g = gray; b = gray;
             }
             for (let sy = 0; sy < S; sy++)
@@ -534,26 +548,30 @@ function drawGameCanvas() {
         }
     }
 
-    // Pass 2 — draw borders where adjacent work pixels have different colours
+    // Pass 2 — borders:
+    //   • Dark (30,30,30)  between cells of DIFFERENT quantized colour (region boundary)
+    //   • Light (190,190,190) between cells of SAME colour (cell grid — shows texture)
     for (let wy = 0; wy < workH; wy++) {
         for (let wx = 0; wx < workW; wx++) {
             const ci = quantPixels[wy][wx];
-            // Right edge of this block
-            if (wx + 1 < workW && quantPixels[wy][wx+1] !== ci) {
-                const dx = wx*S + S - 1;
-                for (let sy = 0; sy < S; sy++) sp(dx, wy*S+sy, 40, 40, 40);
+            if (wx + 1 < workW) {
+                const nc  = quantPixels[wy][wx+1];
+                const col = (nc !== ci) ? 30 : 190;
+                const dx  = wx*S + S - 1;
+                for (let sy = 0; sy < S; sy++) sp(dx, wy*S+sy, col, col, col);
             }
-            // Bottom edge of this block
-            if (wy + 1 < workH && quantPixels[wy+1][wx] !== ci) {
-                const dy = wy*S + S - 1;
-                for (let sx = 0; sx < S; sx++) sp(wx*S+sx, dy, 40, 40, 40);
+            if (wy + 1 < workH) {
+                const nc  = quantPixels[wy+1][wx];
+                const col = (nc !== ci) ? 30 : 190;
+                const dy  = wy*S + S - 1;
+                for (let sx = 0; sx < S; sx++) sp(wx*S+sx, dy, col, col, col);
             }
         }
     }
 
     // Canvas border
-    for (let d = 0; d < canvasW; d++) { sp(d, 0, 40, 40, 40); sp(d, canvasH-1, 40, 40, 40); }
-    for (let d = 0; d < canvasH; d++) { sp(0, d, 40, 40, 40); sp(canvasW-1, d, 40, 40, 40); }
+    for (let d = 0; d < canvasW; d++) { sp(d, 0, 30, 30, 30); sp(d, canvasH-1, 30, 30, 30); }
+    for (let d = 0; d < canvasH; d++) { sp(0, d, 30, 30, 30); sp(canvasW-1, d, 30, 30, 30); }
 
     ctx.putImageData(imgData, 0, 0);
 
@@ -804,7 +822,7 @@ function resetGame() {
     gameState = {
         quantPixels: [], regionLabel: [], regionColor: {}, regionActualColor: {},
         regionSizes: {}, regionRepCells: {}, colorTotals: [], colorsCompleted: new Set(),
-        palette: [], selectedColor: null, paintedRegions: new Set(), workW: 0, workH: 0, S: 10,
+        palette: [], selectedColor: null, paintedRegions: new Set(), workW: 0, workH: 0, S: 10, cellData: null,
     };
     const canvas = document.getElementById('paint-canvas');
     canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
