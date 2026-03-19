@@ -1,6 +1,6 @@
 const MAX_COLORS     = 20;
-const GRID_W_DESKTOP = 90;  // cells wide on desktop — enough detail to capture silhouette edges
-const GRID_W_MOBILE  = 45;  // cells wide on mobile
+const GRID_W_DESKTOP = 160; // cells wide on desktop — fine enough to follow actual silhouette curves
+const GRID_W_MOBILE  = 80;  // cells wide on mobile
 
 let gameState = {
     quantPixels:      [],  // [y][x] → palette color index (Int16Array rows)
@@ -111,12 +111,12 @@ function setupUI() {
             for (let wx = 0; wx < workW; wx++) {
                 const ci = quantPixels[wy][wx];
                 if (wx + 1 < workW) {
-                    const col = quantPixels[wy][wx+1] !== ci ? 30 : 190;
+                    const col = quantPixels[wy][wx+1] !== ci ? 30 : 215;
                     const dx  = wx*S + S - 1;
                     for (let sy = 0; sy < S; sy++) sp(dx, wy*S+sy, col, col, col);
                 }
                 if (wy + 1 < workH) {
-                    const col = quantPixels[wy+1][wx] !== ci ? 30 : 190;
+                    const col = quantPixels[wy+1][wx] !== ci ? 30 : 215;
                     const dy  = wy*S + S - 1;
                     for (let sx = 0; sx < S; sx++) sp(wx*S+sx, dy, col, col, col);
                 }
@@ -232,7 +232,7 @@ function processImage(img) {
 
     const mobile      = isMobile();
     const isLandscape = window.matchMedia('(max-height: 500px) and (orientation: landscape)').matches;
-    const minRegion   = mobile ? 6 : 12; // cells — small enough to keep silhouette edges, big enough to tap
+    const minRegion   = mobile ? 30 : 60; // cells — large regions for easy tapping, fine grid handles edges
 
     // Available screen area
     let availW, availH;
@@ -595,13 +595,13 @@ function drawGameCanvas() {
             const ci = quantPixels[wy][wx];
             if (wx + 1 < workW) {
                 const nc  = quantPixels[wy][wx+1];
-                const col = (nc !== ci) ? 30 : 190;
+                const col = (nc !== ci) ? 30 : 215;
                 const dx  = wx*S + S - 1;
                 for (let sy = 0; sy < S; sy++) sp(dx, wy*S+sy, col, col, col);
             }
             if (wy + 1 < workH) {
                 const nc  = quantPixels[wy+1][wx];
-                const col = (nc !== ci) ? 30 : 190;
+                const col = (nc !== ci) ? 30 : 215;
                 const dy  = wy*S + S - 1;
                 for (let sx = 0; sx < S; sx++) sp(wx*S+sx, dy, col, col, col);
             }
