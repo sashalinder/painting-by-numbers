@@ -84,12 +84,13 @@ function setupUI() {
                 const ci  = quantPixels[wy][wx];
                 if (ci < 0) continue;
                 const rid = regionLabel[wy][wx];
+                const ac  = regionActualColor[rid] || palette[ci];
                 let r, g, b;
                 if (paintedRegions.has(rid)) {
-                    const ac = regionActualColor[rid] || palette[ci];
                     r = ac.r; g = ac.g; b = ac.b;
                 } else {
-                    r = 252; g = 252; b = 252;
+                    const gray = Math.round(ac.r * 0.299 + ac.g * 0.587 + ac.b * 0.114);
+                    r = gray; g = gray; b = gray;
                 }
                 for (let sy = 0; sy < S; sy++)
                     for (let sx = 0; sx < S; sx++)
@@ -513,14 +514,16 @@ function drawGameCanvas() {
             if (ci < 0) continue; // transparent → leave as black default
 
             const rid = regionLabel[wy][wx];
+            const ac  = regionActualColor[rid] || palette[ci];
             let r, g, b;
             if (paintedRegions.has(rid)) {
-                // Use the actual average pixel color of this region (from original image),
-                // not the muted quantisation centroid — makes the result look like the photo
-                const ac = regionActualColor[rid] || palette[ci];
+                // Painted: show the actual colour from the original photo
                 r = ac.r; g = ac.g; b = ac.b;
             } else {
-                r = 252; g = 252; b = 252; // unpainted = near-white
+                // Unpainted: show as grayscale — the image is recognisable in B&W
+                // before the kid starts colouring, just like a real paint-by-numbers
+                const gray = Math.round(ac.r * 0.299 + ac.g * 0.587 + ac.b * 0.114);
+                r = gray; g = gray; b = gray;
             }
             for (let sy = 0; sy < S; sy++)
                 for (let sx = 0; sx < S; sx++)
@@ -568,14 +571,20 @@ function drawGameCanvas() {
         const isSelected = gameState.selectedColor === ci;
 
         if (isSelected) {
-            ctx.fillStyle = '#FF4757';
             ctx.font      = `900 ${Math.round(numSize * 1.15)}px 'Nunito'`;
+            ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+            ctx.lineWidth   = 3;
+            ctx.strokeText(ci + 1, cx, cy);
+            ctx.fillStyle = '#FF4757';
         } else if (gameState.selectedColor !== null) {
-            ctx.fillStyle = 'rgba(80,100,120,0.35)';
             ctx.font      = `bold ${Math.round(numSize * 0.85)}px 'Nunito'`;
+            ctx.fillStyle = 'rgba(80,100,120,0.35)';
         } else {
-            ctx.fillStyle = '#3D4B5C';
-            ctx.font      = `bold ${Math.round(numSize)}px 'Nunito'`;
+            ctx.font        = `bold ${Math.round(numSize)}px 'Nunito'`;
+            ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+            ctx.lineWidth   = 2.5;
+            ctx.strokeText(ci + 1, cx, cy);
+            ctx.fillStyle = '#1a1a2e';
         }
         ctx.fillText(ci + 1, cx, cy);
     }
