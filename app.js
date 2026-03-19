@@ -1,6 +1,6 @@
-const MAX_COLORS     = 18;
-const GRID_W_DESKTOP = 120; // cells wide on desktop — more cells = more detail
-const GRID_W_MOBILE  = 60;  // cells wide on mobile
+const MAX_COLORS     = 14;
+const GRID_W_DESKTOP = 75;  // cells wide on desktop
+const GRID_W_MOBILE  = 40;  // cells wide on mobile
 
 let gameState = {
     quantPixels:      [],  // [y][x] → palette color index (Int16Array rows)
@@ -228,7 +228,7 @@ function processImage(img) {
 
     const mobile      = isMobile();
     const isLandscape = window.matchMedia('(max-height: 500px) and (orientation: landscape)').matches;
-    const minRegion   = mobile ? 2 : 4;  // cells — very small since each cell is already averaged
+    const minRegion   = mobile ? 8 : 20; // cells — merge tiny regions so kids have large areas to tap
 
     // Available screen area
     let availW, availH;
