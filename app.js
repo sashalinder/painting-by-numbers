@@ -87,8 +87,10 @@ function setupUI() {
                 const rid = regionLabel[wy][wx];
                 let r, g, b;
                 if (paintedRegions.has(rid)) {
-                    const ac = regionActualColor[rid] || palette[ci];
-                    r = ac.r; g = ac.g; b = ac.b;
+                    const p  = (wy * workW + wx) * 4;
+                    r = cellData ? cellData[p]   : (regionActualColor[rid] || palette[ci]).r;
+                    g = cellData ? cellData[p+1] : (regionActualColor[rid] || palette[ci]).g;
+                    b = cellData ? cellData[p+2] : (regionActualColor[rid] || palette[ci]).b;
                 } else {
                     const p  = (wy * workW + wx) * 4;
                     const cr = cellData ? cellData[p]   : 180;
@@ -304,7 +306,7 @@ function processImage(img) {
     // confusing micro-regions within the cat.  By merging colours within
     // RGB distance 35 we get fewer, visually distinct palette entries →
     // larger, cleaner regions that are easy for kids to tap.
-    const palette = mergeSimilarPaletteColors(rawPalette, 30);
+    const palette = mergeSimilarPaletteColors(rawPalette, 12);
 
     // Per-pixel nearest-palette assignment with cache
     const nearestCache = new Map();
@@ -466,14 +468,14 @@ function mergeSimilarPaletteColors(palette, threshold) {
             if (!alive[i]) continue;
             for (let j = i + 1; j < colors.length; j++) {
                 if (!alive[j]) continue;
-                const dr = colors[i].r - colors[j].r;
-                const dg = colors[i].g - colors[j].g;
-                const db = colors[i].b - colors[j].b;
-                if (Math.sqrt(dr*dr + dg*dg + db*db) < threshold) {
-                    // Average into i, kill j
-                    colors[i].r = Math.round((colors[i].r + colors[j].r) / 2);
-                    colors[i].g = Math.round((colors[i].g + colors[j].g) / 2);
-                    colors[i].b = Math.round((colors[i].b + colors[j].b) / 2);
+                const lab_i = rgbToLab(colors[i].r, colors[i].g, colors[i].b);
+                const lab_j = rgbToLab(colors[j].r, colors[j].g, colors[j].b);
+                const dL = lab_i[0]-lab_j[0], da = lab_i[1]-lab_j[1], dbb = lab_i[2]-lab_j[2];
+                if (Math.sqrt(dL*dL + da*da + dbb*dbb) < threshold) {
+                    // Average in LAB, convert back to RGB
+                    const merged = labToRgb(
+                        (lab_i[0]+lab_j[0])/2, (lab_i[1]+lab_j[1])/2, (lab_i[2]+lab_j[2])/2);
+                    colors[i].r = merged.r; colors[i].g = merged.g; colors[i].b = merged.b;
                     alive[j] = false;
                     parent[j] = i;
                     changed = true;
@@ -613,14 +615,15 @@ function drawGameCanvas() {
             const rid = regionLabel[wy][wx];
             let r, g, b;
             if (paintedRegions.has(rid)) {
-                // Painted: use the true average colour for this region
-                const ac = regionActualColor[rid] || palette[ci];
-                r = ac.r; g = ac.g; b = ac.b;
+                // Painted: each cell shows its OWN original colour (not region avg)
+                // → fully-painted canvas = pixelated version of original photo
+                const p  = (wy * workW + wx) * 4;
+                r = cellData ? cellData[p]   : (regionActualColor[rid] || palette[ci]).r;
+                g = cellData ? cellData[p+1] : (regionActualColor[rid] || palette[ci]).g;
+                b = cellData ? cellData[p+2] : (regionActualColor[rid] || palette[ci]).b;
             } else {
-                // Unpainted: lightly tinted grayscale (30% actual color + 70% gray).
-                // Pure gray loses contrast (orange cat ≈ blue background in luma).
-                // The tint keeps the image immediately recognisable while the full
-                // color is only revealed when the kid paints the region.
+                // Unpainted: lightly tinted grayscale (35% actual color + 65% gray).
+                // The tint keeps the image recognisable; full colour only appears on paint.
                 const p  = (wy * workW + wx) * 4;
                 const cr = cellData ? cellData[p]   : 180;
                 const cg = cellData ? cellData[p+1] : 180;
@@ -996,7 +999,8 @@ function kMeans(colors, k, initialCentroids) {
     const iters   = initialCentroids ? 15 : 20;
 
     for (let iter = 0; iter < iters; iter++) {
-        const sR = new Float64Array(k), sG = new Float64Array(k), sB = new Float64Array(k);
+        // Accumulate in LAB space for perceptually correct centroids
+        const sL = new Float64Array(k), sA = new Float64Array(k), sB_ = new Float64Array(k);
         const cnt = new Int32Array(k);
         for (const c of colors) {
             let best = Infinity, bi = 0;
@@ -1004,20 +1008,79 @@ function kMeans(colors, k, initialCentroids) {
                 const d = colorDistSq(c.r, c.g, c.b, centroids[i].r, centroids[i].g, centroids[i].b);
                 if (d < best) { best = d; bi = i; }
             }
-            sR[bi]+=c.r; sG[bi]+=c.g; sB[bi]+=c.b; cnt[bi]++;
+            const lab = rgbToLab(c.r, c.g, c.b);
+            sL[bi] += lab[0]; sA[bi] += lab[1]; sB_[bi] += lab[2]; cnt[bi]++;
         }
         for (let i = 0; i < k; i++) {
-            if (cnt[i] > 0) centroids[i] = {
-                r: Math.round(sR[i]/cnt[i]), g: Math.round(sG[i]/cnt[i]), b: Math.round(sB[i]/cnt[i])
-            };
+            if (cnt[i] > 0)
+                centroids[i] = labToRgb(sL[i]/cnt[i], sA[i]/cnt[i], sB_[i]/cnt[i]);
         }
     }
     return centroids;
 }
 
+// ─── CIELAB colour space ─────────────────────────────────────────────────────
+// Perceptual distance: equal ΔE = equal perceived difference.
+// RGB is bad at this — pale cream and pale blue look very different to humans
+// but are close in RGB, causing wrong region merges.
+
+const _labCache = new Map();
+
+function rgbToLab(r, g, b) {
+    const key = (r << 16) | (g << 8) | b;
+    const cached = _labCache.get(key);
+    if (cached) return cached;
+
+    // sRGB → linear
+    let rl = r / 255, gl = g / 255, bl = b / 255;
+    rl = rl > 0.04045 ? ((rl + 0.055) / 1.055) ** 2.4 : rl / 12.92;
+    gl = gl > 0.04045 ? ((gl + 0.055) / 1.055) ** 2.4 : gl / 12.92;
+    bl = bl > 0.04045 ? ((bl + 0.055) / 1.055) ** 2.4 : bl / 12.92;
+
+    // Linear RGB → XYZ (D65)
+    const x = (0.4124564 * rl + 0.3575761 * gl + 0.1804375 * bl) / 0.95047;
+    const y = (0.2126729 * rl + 0.7151522 * gl + 0.0721750 * bl);
+    const z = (0.0193339 * rl + 0.1191920 * gl + 0.9503041 * bl) / 1.08883;
+
+    // XYZ → LAB
+    const f = t => t > 0.008856 ? t ** (1/3) : 7.787 * t + 16/116;
+    const fx = f(x), fy = f(y), fz = f(z);
+
+    const result = [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+    _labCache.set(key, result);
+    return result;
+}
+
+function labToRgb(L, a, bLab) {
+    // LAB → XYZ
+    const fy = (L + 16) / 116;
+    const fx = a / 500 + fy;
+    const fz = fy - bLab / 200;
+
+    const finv = t => t > 0.206893 ? t * t * t : (t - 16/116) / 7.787;
+    const x = 0.95047 * finv(fx);
+    const y = finv(fy);
+    const z = 1.08883 * finv(fz);
+
+    // XYZ → linear RGB
+    let rl =  3.2404542 * x - 1.5371385 * y - 0.4985314 * z;
+    let gl = -0.9692660 * x + 1.8760108 * y + 0.0415560 * z;
+    let bl =  0.0556434 * x - 0.2040259 * y + 1.0572252 * z;
+
+    // Linear → sRGB
+    const gamma = c => c > 0.0031308 ? 1.055 * c ** (1/2.4) - 0.055 : 12.92 * c;
+    return {
+        r: Math.max(0, Math.min(255, Math.round(gamma(rl) * 255))),
+        g: Math.max(0, Math.min(255, Math.round(gamma(gl) * 255))),
+        b: Math.max(0, Math.min(255, Math.round(gamma(bl) * 255))),
+    };
+}
+
 function colorDistSq(r1, g1, b1, r2, g2, b2) {
-    const dr=r1-r2, dg=g1-g2, db=b1-b2;
-    return 2*dr*dr + 4*dg*dg + 3*db*db;
+    const lab1 = rgbToLab(r1, g1, b1);
+    const lab2 = rgbToLab(r2, g2, b2);
+    const dL = lab1[0] - lab2[0], da = lab1[1] - lab2[1], db = lab1[2] - lab2[2];
+    return dL * dL + da * da + db * db;
 }
 
 function findNearestColorIndex(r, g, b, palette) {
