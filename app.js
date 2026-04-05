@@ -232,7 +232,7 @@ function processImage(img) {
 
     const mobile      = isMobile();
     const isLandscape = window.matchMedia('(max-height: 500px) and (orientation: landscape)').matches;
-    const minRegion   = mobile ? 40 : 80; // cells — large regions for easy tapping, fine grid handles edges
+    const minRegion   = mobile ? 60 : 120; // cells — larger regions absorb small same-color fragments
 
     // Available screen area
     let availW, availH;
