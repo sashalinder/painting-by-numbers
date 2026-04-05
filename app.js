@@ -97,7 +97,7 @@ function setupUI() {
                     const cg = cellData ? cellData[p+1] : 180;
                     const cb = cellData ? cellData[p+2] : 180;
                     const gray = Math.round(cr * 0.299 + cg * 0.587 + cb * 0.114);
-                    const tint = 0.35;
+                    const tint = 0.25;
                     r = Math.round(gray * (1 - tint) + cr * tint);
                     g = Math.round(gray * (1 - tint) + cg * tint);
                     b = Math.round(gray * (1 - tint) + cb * tint);
@@ -108,19 +108,17 @@ function setupUI() {
             }
         }
 
-        // Pass 2: borders
+        // Pass 2: region borders only
         for (let wy = 0; wy < workH; wy++) {
             for (let wx = 0; wx < workW; wx++) {
                 const ci = quantPixels[wy][wx];
-                if (wx + 1 < workW) {
-                    const col = quantPixels[wy][wx+1] !== ci ? 30 : 215;
-                    const dx  = wx*S + S - 1;
-                    for (let sy = 0; sy < S; sy++) sp(dx, wy*S+sy, col, col, col);
+                if (wx + 1 < workW && quantPixels[wy][wx+1] !== ci) {
+                    const dx = wx*S + S - 1;
+                    for (let sy = 0; sy < S; sy++) sp(dx, wy*S+sy, 50, 50, 50);
                 }
-                if (wy + 1 < workH) {
-                    const col = quantPixels[wy+1][wx] !== ci ? 30 : 215;
-                    const dy  = wy*S + S - 1;
-                    for (let sx = 0; sx < S; sx++) sp(wx*S+sx, dy, col, col, col);
+                if (wy + 1 < workH && quantPixels[wy+1][wx] !== ci) {
+                    const dy = wy*S + S - 1;
+                    for (let sx = 0; sx < S; sx++) sp(wx*S+sx, dy, 50, 50, 50);
                 }
             }
         }
@@ -622,14 +620,14 @@ function drawGameCanvas() {
                 g = cellData ? cellData[p+1] : (regionActualColor[rid] || palette[ci]).g;
                 b = cellData ? cellData[p+2] : (regionActualColor[rid] || palette[ci]).b;
             } else {
-                // Unpainted: lightly tinted grayscale (35% actual color + 65% gray).
-                // The tint keeps the image recognisable; full colour only appears on paint.
+                // Unpainted: lightly tinted grayscale (25% actual color + 75% gray).
+                // Enough to recognise the image, but muted so painting feels like a reveal.
                 const p  = (wy * workW + wx) * 4;
                 const cr = cellData ? cellData[p]   : 180;
                 const cg = cellData ? cellData[p+1] : 180;
                 const cb = cellData ? cellData[p+2] : 180;
                 const gray  = Math.round(cr * 0.299 + cg * 0.587 + cb * 0.114);
-                const tint  = 0.35;
+                const tint  = 0.25;
                 r = Math.round(gray * (1 - tint) + cr * tint);
                 g = Math.round(gray * (1 - tint) + cg * tint);
                 b = Math.round(gray * (1 - tint) + cb * tint);
@@ -640,23 +638,17 @@ function drawGameCanvas() {
         }
     }
 
-    // Pass 2 — borders:
-    //   • Dark (30,30,30)  between cells of DIFFERENT quantized colour (region boundary)
-    //   • Light (190,190,190) between cells of SAME colour (cell grid — shows texture)
+    // Pass 2 — region borders only (no grid lines within regions)
     for (let wy = 0; wy < workH; wy++) {
         for (let wx = 0; wx < workW; wx++) {
             const ci = quantPixels[wy][wx];
-            if (wx + 1 < workW) {
-                const nc  = quantPixels[wy][wx+1];
-                const col = (nc !== ci) ? 30 : 215;
-                const dx  = wx*S + S - 1;
-                for (let sy = 0; sy < S; sy++) sp(dx, wy*S+sy, col, col, col);
+            if (wx + 1 < workW && quantPixels[wy][wx+1] !== ci) {
+                const dx = wx*S + S - 1;
+                for (let sy = 0; sy < S; sy++) sp(dx, wy*S+sy, 50, 50, 50);
             }
-            if (wy + 1 < workH) {
-                const nc  = quantPixels[wy+1][wx];
-                const col = (nc !== ci) ? 30 : 215;
-                const dy  = wy*S + S - 1;
-                for (let sx = 0; sx < S; sx++) sp(wx*S+sx, dy, col, col, col);
+            if (wy + 1 < workH && quantPixels[wy+1][wx] !== ci) {
+                const dy = wy*S + S - 1;
+                for (let sx = 0; sx < S; sx++) sp(wx*S+sx, dy, 50, 50, 50);
             }
         }
     }
@@ -678,24 +670,25 @@ function drawGameCanvas() {
         if (ci < 0 || paintedRegions.has(rid)) continue;
 
         const regionSize = gameState.regionSizes[rid] || 1;
-        const numSize    = Math.max(9, Math.min(Math.sqrt(regionSize) * S * 0.35, 20));
+        const numSize    = Math.max(11, Math.min(Math.sqrt(regionSize) * S * 0.45, 28));
         const cx         = wx * S + Math.floor(S / 2);
         const cy         = wy * S + Math.floor(S / 2);
         const isSelected = gameState.selectedColor === ci;
 
+        // White halo for all states — makes numbers readable on any background
+        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+        ctx.lineWidth   = 3.5;
+
         if (isSelected) {
-            ctx.font      = `900 ${Math.round(numSize * 1.15)}px 'Nunito'`;
-            ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-            ctx.lineWidth   = 3;
+            ctx.font = `900 ${Math.round(numSize * 1.2)}px 'Nunito'`;
             ctx.strokeText(ci + 1, cx, cy);
             ctx.fillStyle = '#FF4757';
         } else if (gameState.selectedColor !== null) {
-            ctx.font      = `bold ${Math.round(numSize * 0.85)}px 'Nunito'`;
-            ctx.fillStyle = 'rgba(80,100,120,0.35)';
+            ctx.font = `bold ${Math.round(numSize)}px 'Nunito'`;
+            ctx.strokeText(ci + 1, cx, cy);
+            ctx.fillStyle = 'rgba(80,100,120,0.4)';
         } else {
-            ctx.font        = `bold ${Math.round(numSize)}px 'Nunito'`;
-            ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-            ctx.lineWidth   = 2.5;
+            ctx.font = `bold ${Math.round(numSize)}px 'Nunito'`;
             ctx.strokeText(ci + 1, cx, cy);
             ctx.fillStyle = '#1a1a2e';
         }
