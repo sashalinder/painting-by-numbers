@@ -1,4 +1,4 @@
-const MAX_COLORS     = 12;
+const MAX_COLORS     = 16;
 const GRID_W_DESKTOP = 160; // cells wide on desktop — fine enough to follow actual silhouette curves
 const GRID_W_MOBILE  = 80;  // cells wide on mobile
 
@@ -304,7 +304,7 @@ function processImage(img) {
     // confusing micro-regions within the cat.  By merging colours within
     // RGB distance 35 we get fewer, visually distinct palette entries →
     // larger, cleaner regions that are easy for kids to tap.
-    const palette = mergeSimilarPaletteColors(rawPalette, 25);
+    const palette = mergeSimilarPaletteColors(rawPalette, 20);
 
     // Per-pixel nearest-palette assignment with cache
     const nearestCache = new Map();
