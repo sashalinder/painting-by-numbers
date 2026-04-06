@@ -92,15 +92,7 @@ function setupUI() {
                     g = cellData ? cellData[p+1] : (regionActualColor[rid] || palette[ci]).g;
                     b = cellData ? cellData[p+2] : (regionActualColor[rid] || palette[ci]).b;
                 } else {
-                    const p  = (wy * workW + wx) * 4;
-                    const cr = cellData ? cellData[p]   : 180;
-                    const cg = cellData ? cellData[p+1] : 180;
-                    const cb = cellData ? cellData[p+2] : 180;
-                    const gray = Math.round(cr * 0.299 + cg * 0.587 + cb * 0.114);
-                    const tint = 0.25;
-                    r = Math.round(gray * (1 - tint) + cr * tint);
-                    g = Math.round(gray * (1 - tint) + cg * tint);
-                    b = Math.round(gray * (1 - tint) + cb * tint);
+                    r = 255; g = 255; b = 255;
                 }
                 for (let sy = 0; sy < S; sy++)
                     for (let sx = 0; sx < S; sx++)
@@ -108,17 +100,19 @@ function setupUI() {
             }
         }
 
-        // Pass 2: region borders only
+        // Pass 2: coloring-book borders (2px)
         for (let wy = 0; wy < workH; wy++) {
             for (let wx = 0; wx < workW; wx++) {
                 const ci = quantPixels[wy][wx];
                 if (wx + 1 < workW && quantPixels[wy][wx+1] !== ci) {
-                    const dx = wx*S + S - 1;
-                    for (let sy = 0; sy < S; sy++) sp(dx, wy*S+sy, 50, 50, 50);
+                    for (let t = 0; t < 2 && wx*S+S-1-t >= 0; t++)
+                        for (let sy = 0; sy < S; sy++)
+                            sp(wx*S+S-1-t, wy*S+sy, 60, 60, 60);
                 }
                 if (wy + 1 < workH && quantPixels[wy+1][wx] !== ci) {
-                    const dy = wy*S + S - 1;
-                    for (let sx = 0; sx < S; sx++) sp(wx*S+sx, dy, 50, 50, 50);
+                    for (let t = 0; t < 2 && wy*S+S-1-t >= 0; t++)
+                        for (let sx = 0; sx < S; sx++)
+                            sp(wx*S+sx, wy*S+S-1-t, 60, 60, 60);
                 }
             }
         }
@@ -232,7 +226,7 @@ function processImage(img) {
 
     const mobile      = isMobile();
     const isLandscape = window.matchMedia('(max-height: 500px) and (orientation: landscape)').matches;
-    const minRegion   = mobile ? 60 : 120; // cells — larger regions absorb small same-color fragments
+    const minRegion   = mobile ? 25 : 50; // cells — more segments = more fun for kids
 
     // Available screen area
     let availW, availH;
@@ -620,17 +614,9 @@ function drawGameCanvas() {
                 g = cellData ? cellData[p+1] : (regionActualColor[rid] || palette[ci]).g;
                 b = cellData ? cellData[p+2] : (regionActualColor[rid] || palette[ci]).b;
             } else {
-                // Unpainted: lightly tinted grayscale (25% actual color + 75% gray).
-                // Enough to recognise the image, but muted so painting feels like a reveal.
-                const p  = (wy * workW + wx) * 4;
-                const cr = cellData ? cellData[p]   : 180;
-                const cg = cellData ? cellData[p+1] : 180;
-                const cb = cellData ? cellData[p+2] : 180;
-                const gray  = Math.round(cr * 0.299 + cg * 0.587 + cb * 0.114);
-                const tint  = 0.25;
-                r = Math.round(gray * (1 - tint) + cr * tint);
-                g = Math.round(gray * (1 - tint) + cg * tint);
-                b = Math.round(gray * (1 - tint) + cb * tint);
+                // Unpainted: clean white — like a real coloring book page.
+                // Kids see the reference image in the corner and paint by numbers.
+                r = 255; g = 255; b = 255;
             }
             for (let sy = 0; sy < S; sy++)
                 for (let sx = 0; sx < S; sx++)
@@ -638,17 +624,21 @@ function drawGameCanvas() {
         }
     }
 
-    // Pass 2 — region borders only (no grid lines within regions)
+    // Pass 2 — coloring-book borders: 2px dark lines between regions
     for (let wy = 0; wy < workH; wy++) {
         for (let wx = 0; wx < workW; wx++) {
             const ci = quantPixels[wy][wx];
+            // Right border (2px wide)
             if (wx + 1 < workW && quantPixels[wy][wx+1] !== ci) {
-                const dx = wx*S + S - 1;
-                for (let sy = 0; sy < S; sy++) sp(dx, wy*S+sy, 50, 50, 50);
+                for (let t = 0; t < 2 && wx*S+S-1-t >= 0; t++)
+                    for (let sy = 0; sy < S; sy++)
+                        sp(wx*S+S-1-t, wy*S+sy, 60, 60, 60);
             }
+            // Bottom border (2px tall)
             if (wy + 1 < workH && quantPixels[wy+1][wx] !== ci) {
-                const dy = wy*S + S - 1;
-                for (let sx = 0; sx < S; sx++) sp(wx*S+sx, dy, 50, 50, 50);
+                for (let t = 0; t < 2 && wy*S+S-1-t >= 0; t++)
+                    for (let sx = 0; sx < S; sx++)
+                        sp(wx*S+sx, wy*S+S-1-t, 60, 60, 60);
             }
         }
     }
