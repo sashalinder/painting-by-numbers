@@ -100,19 +100,21 @@ function setupUI() {
             }
         }
 
-        // Pass 2: coloring-book borders (2px)
+        // Pass 2: 2px coloring-book borders (one pixel each side of boundary)
         for (let wy = 0; wy < workH; wy++) {
             for (let wx = 0; wx < workW; wx++) {
                 const ci = quantPixels[wy][wx];
                 if (wx + 1 < workW && quantPixels[wy][wx+1] !== ci) {
-                    for (let t = 0; t < 2 && wx*S+S-1-t >= 0; t++)
-                        for (let sy = 0; sy < S; sy++)
-                            sp(wx*S+S-1-t, wy*S+sy, 60, 60, 60);
+                    for (let sy = 0; sy < S; sy++) {
+                        sp(wx*S + S - 1, wy*S+sy, 50, 50, 50);
+                        sp((wx+1)*S,     wy*S+sy, 50, 50, 50);
+                    }
                 }
                 if (wy + 1 < workH && quantPixels[wy+1][wx] !== ci) {
-                    for (let t = 0; t < 2 && wy*S+S-1-t >= 0; t++)
-                        for (let sx = 0; sx < S; sx++)
-                            sp(wx*S+sx, wy*S+S-1-t, 60, 60, 60);
+                    for (let sx = 0; sx < S; sx++) {
+                        sp(wx*S+sx, wy*S + S - 1, 50, 50, 50);
+                        sp(wx*S+sx, (wy+1)*S,     50, 50, 50);
+                    }
                 }
             }
         }
@@ -226,7 +228,7 @@ function processImage(img) {
 
     const mobile      = isMobile();
     const isLandscape = window.matchMedia('(max-height: 500px) and (orientation: landscape)').matches;
-    const minRegion   = mobile ? 25 : 50; // cells — more segments = more fun for kids
+    const minRegion   = mobile ? 60 : 120; // cells — larger regions absorb small same-color fragments
 
     // Available screen area
     let availW, availH;
@@ -614,8 +616,7 @@ function drawGameCanvas() {
                 g = cellData ? cellData[p+1] : (regionActualColor[rid] || palette[ci]).g;
                 b = cellData ? cellData[p+2] : (regionActualColor[rid] || palette[ci]).b;
             } else {
-                // Unpainted: clean white — like a real coloring book page.
-                // Kids see the reference image in the corner and paint by numbers.
+                // Unpainted: white — like a real coloring book page.
                 r = 255; g = 255; b = 255;
             }
             for (let sy = 0; sy < S; sy++)
@@ -624,21 +625,23 @@ function drawGameCanvas() {
         }
     }
 
-    // Pass 2 — coloring-book borders: 2px dark lines between regions
+    // Pass 2 — 2px coloring-book borders: one pixel on each side of every region boundary
     for (let wy = 0; wy < workH; wy++) {
         for (let wx = 0; wx < workW; wx++) {
             const ci = quantPixels[wy][wx];
-            // Right border (2px wide)
             if (wx + 1 < workW && quantPixels[wy][wx+1] !== ci) {
-                for (let t = 0; t < 2 && wx*S+S-1-t >= 0; t++)
-                    for (let sy = 0; sy < S; sy++)
-                        sp(wx*S+S-1-t, wy*S+sy, 60, 60, 60);
+                // Right edge of left cell + left edge of right cell = 2px centred on boundary
+                for (let sy = 0; sy < S; sy++) {
+                    sp(wx*S + S - 1, wy*S+sy, 50, 50, 50);
+                    sp((wx+1)*S,     wy*S+sy, 50, 50, 50);
+                }
             }
-            // Bottom border (2px tall)
             if (wy + 1 < workH && quantPixels[wy+1][wx] !== ci) {
-                for (let t = 0; t < 2 && wy*S+S-1-t >= 0; t++)
-                    for (let sx = 0; sx < S; sx++)
-                        sp(wx*S+sx, wy*S+S-1-t, 60, 60, 60);
+                // Bottom edge of top cell + top edge of bottom cell = 2px centred on boundary
+                for (let sx = 0; sx < S; sx++) {
+                    sp(wx*S+sx, wy*S + S - 1, 50, 50, 50);
+                    sp(wx*S+sx, (wy+1)*S,     50, 50, 50);
+                }
             }
         }
     }
