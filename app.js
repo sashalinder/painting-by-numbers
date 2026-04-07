@@ -92,7 +92,13 @@ function setupUI() {
                     g = cellData ? cellData[p+1] : (regionActualColor[rid] || palette[ci]).g;
                     b = cellData ? cellData[p+2] : (regionActualColor[rid] || palette[ci]).b;
                 } else {
-                    r = 255; g = 255; b = 255;
+                    const p  = (wy * workW + wx) * 4;
+                    const cr = cellData ? cellData[p]   : 220;
+                    const cg = cellData ? cellData[p+1] : 220;
+                    const cb = cellData ? cellData[p+2] : 220;
+                    const gray = cr * 0.299 + cg * 0.587 + cb * 0.114;
+                    const shade = Math.round(255 - (255 - gray) * 0.15);
+                    r = shade; g = shade; b = shade;
                 }
                 for (let sy = 0; sy < S; sy++)
                     for (let sx = 0; sx < S; sx++)
@@ -616,8 +622,16 @@ function drawGameCanvas() {
                 g = cellData ? cellData[p+1] : (regionActualColor[rid] || palette[ci]).g;
                 b = cellData ? cellData[p+2] : (regionActualColor[rid] || palette[ci]).b;
             } else {
-                // Unpainted: white — like a real coloring book page.
-                r = 255; g = 255; b = 255;
+                // Unpainted: mostly white with very subtle grey shadows (15%).
+                // Just enough to see the subject's form (stripes, eyes, shadows)
+                // without revealing colour — like a faint pencil sketch.
+                const p  = (wy * workW + wx) * 4;
+                const cr = cellData ? cellData[p]   : 220;
+                const cg = cellData ? cellData[p+1] : 220;
+                const cb = cellData ? cellData[p+2] : 220;
+                const gray = cr * 0.299 + cg * 0.587 + cb * 0.114;
+                const shade = Math.round(255 - (255 - gray) * 0.15);
+                r = shade; g = shade; b = shade;
             }
             for (let sy = 0; sy < S; sy++)
                 for (let sx = 0; sx < S; sx++)
